@@ -30,9 +30,11 @@ import (
 func main() {
 	cfg := configfile.NewEnvReader()
 
+	locationID := cfg.MustString("location")
 	projectID := cfg.String("project_id")
-
 	namespace := cfg.String("namespace")
+	apiEndpoint := cfg.String("api_endpoint")
+
 	token := cfg.String("token")
 	if token == "" {
 		slog.Error("token required")
@@ -57,10 +59,14 @@ func main() {
 	}
 
 	slog.Info("start deployer")
+	slog.Info("config",
+		"location", locationID,
+		"project_id", projectID,
+		"namespace", namespace,
+		"api_endpoint", apiEndpoint,
+	)
 
 	ctx := context.Background()
-
-	locationID := cfg.MustString("location")
 
 	chEvent := make(chan struct{})
 
@@ -108,12 +114,11 @@ func main() {
 		}
 	}
 
-	httpClient := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
 	deployer := (&client.Client{
-		HTTPClient: httpClient,
+		HTTPClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+		Endpoint: apiEndpoint,
 		Auth: func(r *http.Request) {
 			r.Header.Set("Authorization", "Bearer "+token)
 		},
