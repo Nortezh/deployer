@@ -17,8 +17,8 @@ import (
 
 	"cloud.google.com/go/pubsub"
 	"github.com/acoshift/configfile"
-	"github.com/deploys-app/deploys/api"
-	"github.com/deploys-app/deploys/api/client"
+	"github.com/deploys-app/api"
+	"github.com/deploys-app/api/client"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/api/resource"
 	knet "k8s.io/apimachinery/pkg/util/net"
