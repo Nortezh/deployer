@@ -1,8 +1,12 @@
-FROM golang:1.21.4
+FROM gcr.io/moonrhythm-containers/builder
 
 ENV CGO_ENABLED=0
 
 WORKDIR /workspace
+
+ADD .tool-versions .
+RUN asdf install
+
 ADD go.mod go.sum ./
 RUN go mod download
 ADD . .
