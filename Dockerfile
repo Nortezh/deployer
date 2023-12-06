@@ -1,4 +1,4 @@
-FROM registry.moonrhythm.io
+FROM registry.moonrhythm.io/builder
 
 ENV CGO_ENABLED=0
 
