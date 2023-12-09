@@ -124,5 +124,6 @@ func securityContext() *v1.PodSecurityContext {
 		RunAsUser:    pointer.Int64(10000),
 		RunAsGroup:   pointer.Int64(10000),
 		RunAsNonRoot: pointer.Bool(true),
+		FSGroup:      pointer.Int64(10000),
 	}
 }
