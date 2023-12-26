@@ -201,7 +201,7 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 	}
 
 	deploy.Spec.Replicas = pointer.Int32(int32(obj.Replicas))
-	deploy.Spec.RevisionHistoryLimit = pointer.Int32(0)
+	deploy.Spec.RevisionHistoryLimit = pointer.Int32(1)
 	deploy.Spec.Template.ObjectMeta = metav1.ObjectMeta{
 		Labels:      label,
 		Annotations: obj.Annotations,
