@@ -73,10 +73,18 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 		"ephemeral-storage": resource.MustParse("30Gi"),
 	}
 	if obj.LimitCPU != "" {
-		limits["cpu"] = resource.MustParse(obj.LimitCPU)
+		q, err := resource.ParseQuantity(obj.LimitCPU)
+		if err != nil {
+			return err
+		}
+		limits["cpu"] = q
 	}
 	if obj.LimitMemory != "" {
-		limits["memory"] = resource.MustParse(obj.LimitMemory)
+		q, err := resource.ParseQuantity(obj.LimitMemory)
+		if err != nil {
+			return err
+		}
+		limits["memory"] = q
 	}
 
 	if cj == nil {
@@ -124,6 +132,15 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 		cj.Spec.JobTemplate.Spec.Template.Spec.RuntimeClassName = &obj.RuntimeClass
 	}
 
+	requestCPU, err := resource.ParseQuantity(obj.RequestCPU)
+	if err != nil {
+		return err
+	}
+	requestMemory, err := resource.ParseQuantity(obj.RequestMemory)
+	if err != nil {
+		return err
+	}
+
 	app := v1.Container{
 		Name:            "app",
 		Image:           obj.Image,
@@ -133,8 +150,8 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 		Args:            obj.Args,
 		Resources: v1.ResourceRequirements{
 			Requests: v1.ResourceList{
-				"cpu":               resource.MustParse(obj.RequestCPU),
-				"memory":            resource.MustParse(obj.RequestMemory),
+				"cpu":               requestCPU,
+				"memory":            requestMemory,
 				"ephemeral-storage": resource.MustParse("0"),
 			},
 			Limits: limits,
