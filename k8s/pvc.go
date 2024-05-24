@@ -41,7 +41,7 @@ func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, obj Persistent
 	pvc.Spec.AccessModes = []v1.PersistentVolumeAccessMode{
 		v1.ReadWriteOnce,
 	}
-	pvc.Spec.Resources = v1.ResourceRequirements{
+	pvc.Spec.Resources = v1.VolumeResourceRequirements{
 		Requests: v1.ResourceList{
 			"storage": resource.MustParse(strconv.FormatInt(obj.Size, 10) + "Gi"),
 		},
@@ -88,7 +88,7 @@ func (c *Client) CreatePersistentVolumeClaimForReplicaSet(ctx context.Context, o
 	pvc.Spec.AccessModes = []v1.PersistentVolumeAccessMode{
 		v1.ReadWriteOnce,
 	}
-	pvc.Spec.Resources = v1.ResourceRequirements{
+	pvc.Spec.Resources = v1.VolumeResourceRequirements{
 		Requests: v1.ResourceList{
 			"storage": resource.MustParse(strconv.FormatInt(obj.Size, 10) + "Gi"),
 		},
