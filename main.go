@@ -202,9 +202,13 @@ func (w *Worker) normalizeRequestCPU(request string) string {
 }
 
 func (w *Worker) normalizeLimitCPU(limit string) string {
+	// preserve old behavior when not setting limit, to support single-thread app
+	if limit == "" || limit == "0" {
+		return "1"
+	}
 	_, err := resource.ParseQuantity(w.cpuLimit(limit))
 	if err != nil {
-		return w.CPULimit
+		return "1"
 	}
 	return limit
 }
@@ -216,7 +220,6 @@ func (w *Worker) targetCPUPercent(request, limit string) int {
 	req := float64(reqQuantity.MilliValue()) / 1000
 	lim := float64(limQuantity.MilliValue()) / 1000
 
-	// targetCPUPercent  = 2667 // 80 * math.Floor(limitCPU)(1) / requestCPU
 	// 80 * limit / request
 	return int(80 * lim / req)
 }
