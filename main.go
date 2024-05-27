@@ -155,30 +155,6 @@ const (
 	defaultMemoryLimit = "2Gi"
 )
 
-func normalizeRequestCPU(request string) string {
-	if request == "" {
-		return defaultRequestCPU
-	}
-	if request == "0" {
-		return defaultRequestCPU
-	}
-	_, err := resource.ParseQuantity(request)
-	if err != nil {
-		return defaultRequestCPU
-	}
-	return request
-}
-
-// target for 1 limit cpu (for single thread application)
-func targetCPUPercent(request string) int {
-	reqQuantity := resource.MustParse(normalizeRequestCPU(request))
-	req := float64(reqQuantity.MilliValue()) / 1000
-
-	// targetCPUPercent  = 2667 // 80 * math.Floor(limitCPU)(1) / requestCPU
-	// 80 * limit / request
-	return int(80 * 1 / req)
-}
-
 type Worker struct {
 	Deployer     api.Deployer
 	Client       *k8s.Client
@@ -209,6 +185,40 @@ func (w *Worker) memoryLimit(memory string) string {
 		return "2Gi"
 	}
 	return m.String()
+}
+
+func (w *Worker) normalizeRequestCPU(request string) string {
+	if request == "" {
+		return defaultRequestCPU
+	}
+	if request == "0" {
+		return defaultRequestCPU
+	}
+	_, err := resource.ParseQuantity(request)
+	if err != nil {
+		return defaultRequestCPU
+	}
+	return request
+}
+
+func (w *Worker) normalizeLimitCPU(limit string) string {
+	_, err := resource.ParseQuantity(w.cpuLimit(limit))
+	if err != nil {
+		return w.CPULimit
+	}
+	return limit
+}
+
+// target for 1 limit cpu (for single thread application)
+func (w *Worker) targetCPUPercent(request, limit string) int {
+	reqQuantity := resource.MustParse(w.normalizeRequestCPU(request))
+	limQuantity := resource.MustParse(w.normalizeLimitCPU(limit))
+	req := float64(reqQuantity.MilliValue()) / 1000
+	lim := float64(limQuantity.MilliValue()) / 1000
+
+	// targetCPUPercent  = 2667 // 80 * math.Floor(limitCPU)(1) / requestCPU
+	// 80 * limit / request
+	return int(80 * lim / req)
 }
 
 func (w *Worker) Run() {
@@ -398,7 +408,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Replicas:      it.Spec.MinReplicas,
 				ExposePort:    it.Spec.Port,
 				Annotations:   it.Spec.Annotations,
-				RequestCPU:    normalizeRequestCPU(it.Spec.CPU),
+				RequestCPU:    w.normalizeRequestCPU(it.Spec.CPU),
 				RequestMemory: it.Spec.Memory,
 				LimitCPU:      w.cpuLimit(it.Spec.CPULimit),
 				LimitMemory:   w.memoryLimit(it.Spec.Memory),
@@ -480,7 +490,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					ProjectID:     projectID,
 					MinReplicas:   it.Spec.MinReplicas,
 					MaxReplicas:   it.Spec.MaxReplicas,
-					TargetPercent: targetCPUPercent(it.Spec.CPU),
+					TargetPercent: w.targetCPUPercent(it.Spec.CPU, it.Spec.CPULimit),
 				})
 				if err != nil {
 					slog.Error("deployment: creating hpa error", "id", it.ID, "error", err)
@@ -505,7 +515,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Args:          it.Spec.Args,
 				Replicas:      it.Spec.MinReplicas,
 				Annotations:   it.Spec.Annotations,
-				RequestCPU:    normalizeRequestCPU(it.Spec.CPU),
+				RequestCPU:    w.normalizeRequestCPU(it.Spec.CPU),
 				RequestMemory: it.Spec.Memory,
 				LimitCPU:      w.cpuLimit(it.Spec.CPULimit),
 				LimitMemory:   w.memoryLimit(it.Spec.Memory),
@@ -537,7 +547,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					ProjectID:     projectID,
 					MinReplicas:   it.Spec.MinReplicas,
 					MaxReplicas:   it.Spec.MaxReplicas,
-					TargetPercent: targetCPUPercent(it.Spec.CPU),
+					TargetPercent: w.targetCPUPercent(it.Spec.CPU, it.Spec.CPULimit),
 				})
 				if err != nil {
 					slog.Error("deployment: creating hpa error", "id", it.ID, "error", err)
@@ -561,7 +571,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Command:       it.Spec.Command,
 				Args:          it.Spec.Args,
 				Schedule:      it.Spec.Schedule,
-				RequestCPU:    normalizeRequestCPU(it.Spec.CPU),
+				RequestCPU:    w.normalizeRequestCPU(it.Spec.CPU),
 				RequestMemory: it.Spec.Memory,
 				LimitCPU:      w.cpuLimit(it.Spec.CPULimit),
 				LimitMemory:   w.memoryLimit(it.Spec.Memory),
@@ -599,7 +609,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Replicas:      1,
 				ExposePort:    it.Spec.Port,
 				Annotations:   it.Spec.Annotations,
-				RequestCPU:    normalizeRequestCPU(it.Spec.CPU),
+				RequestCPU:    w.normalizeRequestCPU(it.Spec.CPU),
 				RequestMemory: it.Spec.Memory,
 				LimitCPU:      w.cpuLimit(it.Spec.CPULimit),
 				LimitMemory:   w.memoryLimit(it.Spec.Memory),
@@ -659,7 +669,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Replicas:      it.Spec.MinReplicas,
 				ExposePort:    it.Spec.Port,
 				Annotations:   it.Spec.Annotations,
-				RequestCPU:    normalizeRequestCPU(it.Spec.CPU),
+				RequestCPU:    w.normalizeRequestCPU(it.Spec.CPU),
 				RequestMemory: it.Spec.Memory,
 				LimitCPU:      w.cpuLimit(it.Spec.CPULimit),
 				LimitMemory:   w.memoryLimit(it.Spec.Memory),
@@ -702,7 +712,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					ProjectID:     projectID,
 					MinReplicas:   it.Spec.MinReplicas,
 					MaxReplicas:   it.Spec.MaxReplicas,
-					TargetPercent: targetCPUPercent(it.Spec.CPU),
+					TargetPercent: w.targetCPUPercent(it.Spec.CPU, it.Spec.CPULimit),
 				})
 				if err != nil {
 					slog.Error("deployment: creating hpa error", "id", it.ID, "error", err)
