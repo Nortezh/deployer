@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/pubsub v1.38.0
 	github.com/acoshift/configfile v1.9.0
 	github.com/cert-manager/cert-manager v1.12.6
-	github.com/deploys-app/api v0.0.0-20240105011718-be24d6a9d4e6
+	github.com/deploys-app/api v0.0.0-20240808062734-dc6a779ac9e7
 	github.com/redis/go-redis/v9 v9.5.1
 	github.com/samber/lo v1.39.0
 	gopkg.in/yaml.v2 v2.4.0
