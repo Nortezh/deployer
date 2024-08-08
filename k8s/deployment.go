@@ -20,7 +20,7 @@ import (
 const (
 	h2cpImage                     = "gcr.io/moonrhythm-containers/h2cp@sha256:cf20f92a3f49003daf91d648f1c863d037db35850679c033895a4aff5666836c"
 	terminationGracePeriodSeconds = 20
-	nonSpotReplicaThreshold       = 2
+	nonSpotReplicaThreshold       = 1
 )
 
 type PoolConfig struct {
@@ -75,6 +75,7 @@ type Deployment struct {
 	H2CP          bool
 	Protocol      string
 	Sidecars      []*api.SidecarConfig
+	ForceSpot     bool
 }
 
 func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
@@ -257,6 +258,10 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		deploy.Spec.Template.Spec.Affinity.NodeAffinity = preferNonSpotNodeAffinity()
 	default:
 		deploy.Spec.Template.Spec.Affinity.NodeAffinity = defaultSpotNodeAffinity()
+	}
+
+	if obj.ForceSpot {
+		deploy.Spec.Template.Spec.Affinity.NodeAffinity = preferSpotNodeAffinity()
 	}
 
 	if obj.Pool.Name != "" {
