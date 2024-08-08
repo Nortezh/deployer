@@ -431,6 +431,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				H2CP:          h2cp,
 				Protocol:      string(it.Spec.Protocol),
 				Sidecars:      sidecarConfigs,
+				ForceSpot:     it.BillingConfig.ForceSpot,
 			}
 
 			err = w.Client.CreateDeployment(ctx, deploy)
@@ -536,6 +537,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				},
 				BindConfigMap: bindData,
 				Sidecars:      sidecarConfigs,
+				ForceSpot:     it.BillingConfig.ForceSpot,
 			}
 
 			err = w.Client.CreateDeployment(ctx, deploy)
@@ -630,6 +632,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				},
 				BindConfigMap: bindData,
 				Sidecars:      sidecarConfigs,
+				ForceSpot:     it.BillingConfig.ForceSpot,
 			}
 
 			err = w.Client.CreateDeployment(ctx, deploy)
@@ -690,6 +693,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				},
 				BindConfigMap: bindData,
 				Sidecars:      sidecarConfigs,
+				ForceSpot:     it.BillingConfig.ForceSpot,
 			}
 
 			err = w.Client.CreateDeployment(ctx, deploy)
