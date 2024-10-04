@@ -152,7 +152,7 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 			Requests: v1.ResourceList{
 				"cpu":               requestCPU,
 				"memory":            requestMemory,
-				"ephemeral-storage": resource.MustParse("0"),
+				"ephemeral-storage": defaultEphemeralStorage,
 			},
 			Limits: limits,
 		},

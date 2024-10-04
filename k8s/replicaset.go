@@ -197,7 +197,7 @@ func (c *Client) CreateReplicaSet(ctx context.Context, obj ReplicaSet) error {
 			Requests: v1.ResourceList{
 				"cpu":               requestCPU,
 				"memory":            requestMemory,
-				"ephemeral-storage": resource.MustParse("0"),
+				"ephemeral-storage": defaultEphemeralStorage,
 			},
 			Limits: limits,
 		},
