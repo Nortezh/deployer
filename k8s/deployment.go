@@ -321,7 +321,7 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 			Requests: v1.ResourceList{
 				"cpu":               requestCPU,
 				"memory":            requestMemory,
-				"ephemeral-storage": resource.MustParse("0"),
+				"ephemeral-storage": defaultEphemeralStorage,
 			},
 			Limits: limits,
 		},
