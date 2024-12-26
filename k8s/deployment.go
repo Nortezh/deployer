@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	h2cpImage                     = "gcr.io/moonrhythm-containers/h2cp@sha256:cf20f92a3f49003daf91d648f1c863d037db35850679c033895a4aff5666836c"
+	h2cpImage                     = "gcr.io/moonrhythm-containers/h2cp@sha256:d999aac31aec82224cb9e432a9ccc3e212f744ab644d6cc277c43dceed4cca16"
 	terminationGracePeriodSeconds = 20
 	nonSpotReplicaThreshold       = 1
 )
