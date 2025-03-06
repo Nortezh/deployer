@@ -432,6 +432,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Protocol:      string(it.Spec.Protocol),
 				Sidecars:      sidecarConfigs,
 				ForceSpot:     it.BillingConfig.ForceSpot,
+				HealthCheck:   it.Spec.HealthCheck,
 			}
 
 			err = w.Client.CreateDeployment(ctx, deploy)
@@ -538,6 +539,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				BindConfigMap: bindData,
 				Sidecars:      sidecarConfigs,
 				ForceSpot:     it.BillingConfig.ForceSpot,
+				HealthCheck:   it.Spec.HealthCheck,
 			}
 
 			err = w.Client.CreateDeployment(ctx, deploy)
@@ -633,6 +635,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				BindConfigMap: bindData,
 				Sidecars:      sidecarConfigs,
 				ForceSpot:     it.BillingConfig.ForceSpot,
+				HealthCheck:   it.Spec.HealthCheck,
 			}
 
 			err = w.Client.CreateDeployment(ctx, deploy)
@@ -694,6 +697,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				BindConfigMap: bindData,
 				Sidecars:      sidecarConfigs,
 				ForceSpot:     it.BillingConfig.ForceSpot,
+				HealthCheck:   it.Spec.HealthCheck,
 			}
 
 			err = w.Client.CreateDeployment(ctx, deploy)

@@ -76,6 +76,7 @@ type Deployment struct {
 	Protocol      string
 	Sidecars      []*api.SidecarConfig
 	ForceSpot     bool
+	HealthCheck   api.DeploymentHealthCheck
 }
 
 func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
@@ -149,6 +150,12 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 			PeriodSeconds:       5,
 			SuccessThreshold:    1,
 			FailureThreshold:    3,
+		}
+		if obj.HealthCheck.HTTPGet != nil {
+			readinessProbe.ProbeHandler.TCPSocket = nil
+			readinessProbe.ProbeHandler.HTTPGet = &v1.HTTPGetAction{
+				Path: obj.HealthCheck.HTTPGet.Path,
+			}
 		}
 
 		startupProbe = &v1.Probe{
