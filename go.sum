@@ -16,6 +16,8 @@ cloud.google.com/go/longrunning v0.6.4/go.mod h1:ttZpLCe6e7EXvn9OxpBRx7kZEB0efv8
 cloud.google.com/go/pubsub v1.47.0 h1:Ou2Qu4INnf7ykrFjGv2ntFOjVo8Nloh/+OffF4mUu9w=
 cloud.google.com/go/pubsub v1.47.0/go.mod h1:LaENesmga+2u0nDtLkIOILskxsfvn/BXX9Ak1NFxOs8=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
+github.com/Nortezh/api v1.2.3 h1:8S/8CRwmB2WEGKpLWsMJWwHB+Jw1PL6son80LS8cMLY=
+github.com/Nortezh/api v1.2.3/go.mod h1:Z7G8gUbLoW/yxkDJ9YAdLtCh0FcXPvDc/v72pfxJ2sg=
 github.com/acoshift/arpc/v2 v2.2.0 h1:OKcFyMtoZULVfs4Gfa5AQOVItaTNIgTIuOb2YzKz9AA=
 github.com/acoshift/arpc/v2 v2.2.0/go.mod h1:EZ7M0MpTTDhD8+9k+PbvGGFAoHDhs12442A6VpNDS7A=
 github.com/acoshift/configfile v1.9.0 h1:/t8DhgBdYIr15f4BkkM4bDSBWi0+ImKwWgJN/M5Hbb0=
@@ -37,8 +39,6 @@ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSs
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/deploys-app/api v0.0.0-20250306074545-a193af93f2e8 h1:s88odkFD3VDU3LATnUrx+428jvpEvIGeS2y34r54b9c=
-github.com/deploys-app/api v0.0.0-20250306074545-a193af93f2e8/go.mod h1:7aMzMAb0JD8TK9ayMTbysSQjv010nUTCJn5fSRSb2GA=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f h1:lO4WD4F/rVNCu3HqELle0jiPLLBs70cWOduZpkS1E78=
 github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f/go.mod h1:cuUVRXasLTGF7a8hSLbxyZXjz+1KgoB3wDUb6vlszIc=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
