@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/deploys-app/api"
+	"github.com/Nortezh/api"
 	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -32,7 +32,7 @@ type CronJob struct {
 	LimitCPU      string
 	LimitMemory   string
 	PullSecret    string
-	Disk          Disk
+	Disks         []Disk
 	RuntimeClass  string
 	Pool          PoolConfig
 	BindConfigMap map[string]string // key => file path
@@ -178,21 +178,25 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 			SubPath:   key,
 		})
 	}
-	if obj.Disk.Name != "" {
-		cj.Spec.JobTemplate.Spec.Template.Spec.Volumes = append(cj.Spec.JobTemplate.Spec.Template.Spec.Volumes, v1.Volume{
-			Name: "data",
-			VolumeSource: v1.VolumeSource{
-				PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
-					ClaimName: obj.Disk.Name,
+
+	for i, disk := range obj.Disks {
+		if disk.Name != "" {
+			cj.Spec.JobTemplate.Spec.Template.Spec.Volumes = append(cj.Spec.JobTemplate.Spec.Template.Spec.Volumes, v1.Volume{
+				Name: "data" + strconv.Itoa(i),
+				VolumeSource: v1.VolumeSource{
+					PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
+						ClaimName: disk.Name,
+					},
 				},
-			},
-		})
-		app.VolumeMounts = append(app.VolumeMounts, v1.VolumeMount{
-			Name:      "data",
-			MountPath: obj.Disk.MountPath,
-			SubPath:   obj.Disk.SubPath,
-		})
+			})
+			app.VolumeMounts = append(app.VolumeMounts, v1.VolumeMount{
+				Name:      "data" + strconv.Itoa(i),
+				MountPath: disk.MountPath,
+				SubPath:   disk.SubPath,
+			})
+		}
 	}
+
 	cj.Spec.JobTemplate.Spec.Template.Spec.Containers = []v1.Container{app}
 
 	for _, s := range obj.Sidecars {
