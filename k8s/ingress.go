@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/deploys-app/api"
+	"github.com/Nortezh/api"
 	"gopkg.in/yaml.v2"
 	networking "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"

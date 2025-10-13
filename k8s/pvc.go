@@ -17,6 +17,7 @@ type PersistentVolumeClaim struct {
 	ProjectID    string
 	Size         int64
 	StorageClass string
+	AccessModes  []v1.PersistentVolumeAccessMode
 }
 
 func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, obj PersistentVolumeClaim) error {
@@ -38,9 +39,16 @@ func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, obj Persistent
 		"id":        obj.ID,
 		"projectId": obj.ProjectID,
 	}
+
 	pvc.Spec.AccessModes = []v1.PersistentVolumeAccessMode{
 		v1.ReadWriteOnce,
 	}
+
+	// override access modes
+	if len(obj.AccessModes) > 0 {
+		pvc.Spec.AccessModes = obj.AccessModes
+	}
+
 	pvc.Spec.Resources = v1.VolumeResourceRequirements{
 		Requests: v1.ResourceList{
 			"storage": resource.MustParse(strconv.FormatInt(obj.Size, 10) + "Gi"),

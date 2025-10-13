@@ -16,10 +16,11 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub"
+	"github.com/Nortezh/api"
+	"github.com/Nortezh/api/client"
 	"github.com/acoshift/configfile"
-	"github.com/deploys-app/api"
-	"github.com/deploys-app/api/client"
 	"github.com/samber/lo"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	knet "k8s.io/apimachinery/pkg/util/net"
 
@@ -399,6 +400,22 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 		case api.DeploymentTypeWebService:
 			h2cp := w.H2CP && (it.Spec.Protocol == "http" || it.Spec.Protocol == "https")
 
+			disks := []k8s.Disk{
+				{
+					Name:      resourceID(it.ProjectID, it.Spec.DiskName),
+					MountPath: it.Spec.DiskMountPath,
+					SubPath:   it.Spec.DiskSubPath,
+				},
+			}
+
+			for mountPath, c := range it.Spec.ExtraDiskMountData {
+				disks = append(disks, k8s.Disk{
+					Name:      resourceID(it.ProjectID, c.DiskName),
+					MountPath: mountPath,
+					SubPath:   c.SubPath,
+				})
+			}
+
 			deploy := k8s.Deployment{
 				ID:            id,
 				ProjectID:     projectID,
@@ -420,13 +437,9 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					Name:  it.BillingConfig.Pool,
 					Share: it.BillingConfig.SharePool,
 				},
-				SA:         resourceID(it.ProjectID, it.Spec.WorkloadIdentityName),
-				PullSecret: pullSecretResourceID(it.ProjectID, it.Spec.PullSecretName),
-				Disk: k8s.Disk{
-					Name:      resourceID(it.ProjectID, it.Spec.DiskName),
-					MountPath: it.Spec.DiskMountPath,
-					SubPath:   it.Spec.DiskSubPath,
-				},
+				SA:            resourceID(it.ProjectID, it.Spec.WorkloadIdentityName),
+				PullSecret:    pullSecretResourceID(it.ProjectID, it.Spec.PullSecretName),
+				Disks:         disks,
 				BindConfigMap: bindData,
 				H2CP:          h2cp,
 				Protocol:      string(it.Spec.Protocol),
@@ -509,6 +522,23 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				}
 			}
 		case api.DeploymentTypeWorker:
+
+			disks := []k8s.Disk{
+				{
+					Name:      resourceID(it.ProjectID, it.Spec.DiskName),
+					MountPath: it.Spec.DiskMountPath,
+					SubPath:   it.Spec.DiskSubPath,
+				},
+			}
+
+			for mountPath, c := range it.Spec.ExtraDiskMountData {
+				disks = append(disks, k8s.Disk{
+					Name:      resourceID(it.ProjectID, c.DiskName),
+					MountPath: mountPath,
+					SubPath:   c.SubPath,
+				})
+			}
+
 			deploy := k8s.Deployment{
 				ID:            id,
 				ProjectID:     projectID,
@@ -529,13 +559,9 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					Name:  it.BillingConfig.Pool,
 					Share: it.BillingConfig.SharePool,
 				},
-				SA:         resourceID(it.ProjectID, it.Spec.WorkloadIdentityName),
-				PullSecret: pullSecretResourceID(it.ProjectID, it.Spec.PullSecretName),
-				Disk: k8s.Disk{
-					Name:      resourceID(it.ProjectID, it.Spec.DiskName),
-					MountPath: it.Spec.DiskMountPath,
-					SubPath:   it.Spec.DiskSubPath,
-				},
+				SA:            resourceID(it.ProjectID, it.Spec.WorkloadIdentityName),
+				PullSecret:    pullSecretResourceID(it.ProjectID, it.Spec.PullSecretName),
+				Disks:         disks,
 				BindConfigMap: bindData,
 				Sidecars:      sidecarConfigs,
 				ForceSpot:     it.BillingConfig.ForceSpot,
@@ -568,6 +594,23 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				}
 			}
 		case api.DeploymentTypeCronJob:
+
+			disks := []k8s.Disk{
+				{
+					Name:      resourceID(it.ProjectID, it.Spec.DiskName),
+					MountPath: it.Spec.DiskMountPath,
+					SubPath:   it.Spec.DiskSubPath,
+				},
+			}
+
+			for mountPath, c := range it.Spec.ExtraDiskMountData {
+				disks = append(disks, k8s.Disk{
+					Name:      resourceID(it.ProjectID, c.DiskName),
+					MountPath: mountPath,
+					SubPath:   c.SubPath,
+				})
+			}
+
 			cj := k8s.CronJob{
 				ID:            id,
 				ProjectID:     projectID,
@@ -587,13 +630,9 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					Name:  it.BillingConfig.Pool,
 					Share: it.BillingConfig.SharePool,
 				},
-				SA:         resourceID(it.ProjectID, it.Spec.WorkloadIdentityName),
-				PullSecret: pullSecretResourceID(it.ProjectID, it.Spec.PullSecretName),
-				Disk: k8s.Disk{
-					Name:      resourceID(it.ProjectID, it.Spec.DiskName),
-					MountPath: it.Spec.DiskMountPath,
-					SubPath:   it.Spec.DiskSubPath,
-				},
+				SA:            resourceID(it.ProjectID, it.Spec.WorkloadIdentityName),
+				PullSecret:    pullSecretResourceID(it.ProjectID, it.Spec.PullSecretName),
+				Disks:         disks,
 				BindConfigMap: bindData,
 				Sidecars:      sidecarConfigs,
 			}
@@ -604,6 +643,23 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				return err
 			}
 		case api.DeploymentTypeTCPService:
+
+			disks := []k8s.Disk{
+				{
+					Name:      resourceID(it.ProjectID, it.Spec.DiskName),
+					MountPath: it.Spec.DiskMountPath,
+					SubPath:   it.Spec.DiskSubPath,
+				},
+			}
+
+			for mountPath, c := range it.Spec.ExtraDiskMountData {
+				disks = append(disks, k8s.Disk{
+					Name:      resourceID(it.ProjectID, c.DiskName),
+					MountPath: mountPath,
+					SubPath:   c.SubPath,
+				})
+			}
+
 			deploy := k8s.Deployment{
 				ID:            id,
 				ProjectID:     projectID,
@@ -625,13 +681,9 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					Name:  it.BillingConfig.Pool,
 					Share: it.BillingConfig.SharePool,
 				},
-				SA:         resourceID(it.ProjectID, it.Spec.WorkloadIdentityName),
-				PullSecret: pullSecretResourceID(it.ProjectID, it.Spec.PullSecretName),
-				Disk: k8s.Disk{
-					Name:      resourceID(it.ProjectID, it.Spec.DiskName),
-					MountPath: it.Spec.DiskMountPath,
-					SubPath:   it.Spec.DiskSubPath,
-				},
+				SA:            resourceID(it.ProjectID, it.Spec.WorkloadIdentityName),
+				PullSecret:    pullSecretResourceID(it.ProjectID, it.Spec.PullSecretName),
+				Disks:         disks,
 				BindConfigMap: bindData,
 				Sidecars:      sidecarConfigs,
 				ForceSpot:     it.BillingConfig.ForceSpot,
@@ -666,6 +718,23 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 
 			result.NodePort = &nodePort
 		case api.DeploymentTypeInternalTCPService:
+
+			disks := []k8s.Disk{
+				{
+					Name:      resourceID(it.ProjectID, it.Spec.DiskName),
+					MountPath: it.Spec.DiskMountPath,
+					SubPath:   it.Spec.DiskSubPath,
+				},
+			}
+
+			for mountPath, c := range it.Spec.ExtraDiskMountData {
+				disks = append(disks, k8s.Disk{
+					Name:      resourceID(it.ProjectID, c.DiskName),
+					MountPath: mountPath,
+					SubPath:   c.SubPath,
+				})
+			}
+
 			deploy := k8s.Deployment{
 				ID:            id,
 				ProjectID:     projectID,
@@ -687,13 +756,9 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					Name:  it.BillingConfig.Pool,
 					Share: it.BillingConfig.SharePool,
 				},
-				SA:         resourceID(it.ProjectID, it.Spec.WorkloadIdentityName),
-				PullSecret: pullSecretResourceID(it.ProjectID, it.Spec.PullSecretName),
-				Disk: k8s.Disk{
-					Name:      resourceID(it.ProjectID, it.Spec.DiskName),
-					MountPath: it.Spec.DiskMountPath,
-					SubPath:   it.Spec.DiskSubPath,
-				},
+				SA:            resourceID(it.ProjectID, it.Spec.WorkloadIdentityName),
+				PullSecret:    pullSecretResourceID(it.ProjectID, it.Spec.PullSecretName),
+				Disks:         disks,
 				BindConfigMap: bindData,
 				Sidecars:      sidecarConfigs,
 				ForceSpot:     it.BillingConfig.ForceSpot,
@@ -928,11 +993,20 @@ func (w *Worker) diskCreate(ctx context.Context, it *api.DeployerCommandDiskCrea
 	id := resourceID(it.ProjectID, it.Name)
 	projectID := idString(it.ProjectID)
 
+	storageClass := "deploys-default"
+
+	if it.StorageClass != "" {
+		storageClass = it.StorageClass
+	}
+
 	err := w.Client.CreatePersistentVolumeClaim(ctx, k8s.PersistentVolumeClaim{
-		ID:        id,
-		ProjectID: projectID,
-		Size:      it.Size,
-		// StorageClass: "ssd",
+		ID:           id,
+		ProjectID:    projectID,
+		Size:         it.Size,
+		StorageClass: storageClass,
+		AccessModes: []v1.PersistentVolumeAccessMode{
+			v1.ReadWriteMany,
+		},
 	})
 	if err != nil {
 		slog.Error("disk: creating error", "id", it.ID, "error", err)
