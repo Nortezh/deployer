@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/deploys-app/api"
+	"github.com/Nortezh/api"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -68,7 +68,7 @@ type Deployment struct {
 	LimitCPU      string
 	LimitMemory   string
 	PullSecret    string
-	Disk          Disk
+	Disks         []Disk
 	RuntimeClass  string
 	Pool          PoolConfig
 	BindConfigMap map[string]string // key => file path
@@ -209,8 +209,15 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		},
 	}
 
+	// // stateful single replica
+	// if obj.Disk.Name != "" && obj.Replicas <= 1 {
+	// 	deploy.Spec.Strategy = appsv1.DeploymentStrategy{
+	// 		Type: appsv1.RecreateDeploymentStrategyType,
+	// 	}
+	// }
+
 	// stateful single replica
-	if obj.Disk.Name != "" && obj.Replicas <= 1 {
+	if obj.Replicas <= 1 {
 		deploy.Spec.Strategy = appsv1.DeploymentStrategy{
 			Type: appsv1.RecreateDeploymentStrategyType,
 		}
@@ -232,29 +239,51 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 
 	deploy.Spec.Template.Spec.Affinity = &v1.Affinity{}
 
-	// try to spread stateless workload to difference node
-	if obj.Disk.Name == "" {
-		deploy.Spec.Template.Spec.Affinity.PodAntiAffinity = &v1.PodAntiAffinity{
-			// RequiredDuringSchedulingIgnoredDuringExecution: []v1.PodAffinityTerm{
-			// 	{
-			// 		TopologyKey: "kubernetes.io/hostname",
-			// 		LabelSelector: &metav1.LabelSelector{
-			// 			MatchLabels: label,
-			// 		},
-			// 	},
-			// },
-			PreferredDuringSchedulingIgnoredDuringExecution: []v1.WeightedPodAffinityTerm{
-				{
-					Weight: 100,
-					PodAffinityTerm: v1.PodAffinityTerm{
-						TopologyKey: "kubernetes.io/hostname",
-						LabelSelector: &metav1.LabelSelector{
-							MatchLabels: label,
-						},
+	// // try to spread stateless workload to difference node
+	// if obj.Disk.Name == "" {
+	// 	deploy.Spec.Template.Spec.Affinity.PodAntiAffinity = &v1.PodAntiAffinity{
+	// 		// RequiredDuringSchedulingIgnoredDuringExecution: []v1.PodAffinityTerm{
+	// 		// 	{
+	// 		// 		TopologyKey: "kubernetes.io/hostname",
+	// 		// 		LabelSelector: &metav1.LabelSelector{
+	// 		// 			MatchLabels: label,
+	// 		// 		},
+	// 		// 	},
+	// 		// },
+	// 		PreferredDuringSchedulingIgnoredDuringExecution: []v1.WeightedPodAffinityTerm{
+	// 			{
+	// 				Weight: 100,
+	// 				PodAffinityTerm: v1.PodAffinityTerm{
+	// 					TopologyKey: "kubernetes.io/hostname",
+	// 					LabelSelector: &metav1.LabelSelector{
+	// 						MatchLabels: label,
+	// 					},
+	// 				},
+	// 			},
+	// 		},
+	// 	}
+	// }
+
+	deploy.Spec.Template.Spec.Affinity.PodAntiAffinity = &v1.PodAntiAffinity{
+		// RequiredDuringSchedulingIgnoredDuringExecution: []v1.PodAffinityTerm{
+		// 	{
+		// 		TopologyKey: "kubernetes.io/hostname",
+		// 		LabelSelector: &metav1.LabelSelector{
+		// 			MatchLabels: label,
+		// 		},
+		// 	},
+		// },
+		PreferredDuringSchedulingIgnoredDuringExecution: []v1.WeightedPodAffinityTerm{
+			{
+				Weight: 100,
+				PodAffinityTerm: v1.PodAffinityTerm{
+					TopologyKey: "kubernetes.io/hostname",
+					LabelSelector: &metav1.LabelSelector{
+						MatchLabels: label,
 					},
 				},
 			},
-		}
+		},
 	}
 
 	isReservedMemory := obj.RequestMemory != "0"
@@ -357,22 +386,26 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 			SubPath:   key,
 		})
 	}
-	if obj.Disk.Name != "" {
-		deploy.Spec.Template.Spec.Volumes = append(deploy.Spec.Template.Spec.Volumes, v1.Volume{
-			Name: "data",
-			VolumeSource: v1.VolumeSource{
-				PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
-					ClaimName: obj.Disk.Name,
+
+	for i, disk := range obj.Disks {
+		if disk.Name != "" {
+			deploy.Spec.Template.Spec.Volumes = append(deploy.Spec.Template.Spec.Volumes, v1.Volume{
+				Name: "data" + strconv.Itoa(i),
+				VolumeSource: v1.VolumeSource{
+					PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
+						ClaimName: disk.Name,
+					},
 				},
-			},
-		})
-		app.VolumeMounts = append(app.VolumeMounts, v1.VolumeMount{
-			Name:      "data",
-			MountPath: obj.Disk.MountPath,
-			SubPath:   obj.Disk.SubPath,
-		})
-		deploy.Spec.Template.Spec.SecurityContext = securityContext()
+			})
+			app.VolumeMounts = append(app.VolumeMounts, v1.VolumeMount{
+				Name:      "data" + strconv.Itoa(i),
+				MountPath: disk.MountPath,
+				SubPath:   disk.SubPath,
+			})
+			deploy.Spec.Template.Spec.SecurityContext = securityContext()
+		}
 	}
+
 	deploy.Spec.Template.Spec.Containers = []v1.Container{app}
 	deploy.Spec.Template.Spec.ServiceAccountName = obj.SA
 	deploy.Spec.Template.Spec.TerminationGracePeriodSeconds = pointer.Int64(terminationGracePeriodSeconds)
