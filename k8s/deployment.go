@@ -402,7 +402,7 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 				MountPath: disk.MountPath,
 				SubPath:   disk.SubPath,
 			})
-			deploy.Spec.Template.Spec.SecurityContext = securityContext()
+			// deploy.Spec.Template.Spec.SecurityContext = securityContext()
 		}
 	}
 
