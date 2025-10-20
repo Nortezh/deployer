@@ -16,8 +16,8 @@ cloud.google.com/go/longrunning v0.6.4/go.mod h1:ttZpLCe6e7EXvn9OxpBRx7kZEB0efv8
 cloud.google.com/go/pubsub v1.47.0 h1:Ou2Qu4INnf7ykrFjGv2ntFOjVo8Nloh/+OffF4mUu9w=
 cloud.google.com/go/pubsub v1.47.0/go.mod h1:LaENesmga+2u0nDtLkIOILskxsfvn/BXX9Ak1NFxOs8=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/Nortezh/api v1.2.3 h1:8S/8CRwmB2WEGKpLWsMJWwHB+Jw1PL6son80LS8cMLY=
-github.com/Nortezh/api v1.2.3/go.mod h1:Z7G8gUbLoW/yxkDJ9YAdLtCh0FcXPvDc/v72pfxJ2sg=
+github.com/Nortezh/api v1.2.5 h1:4008gc5vvD/XCz/MwaRviMBoDDmTdvkhfwbaCvWLv28=
+github.com/Nortezh/api v1.2.5/go.mod h1:Z7G8gUbLoW/yxkDJ9YAdLtCh0FcXPvDc/v72pfxJ2sg=
 github.com/acoshift/arpc/v2 v2.2.0 h1:OKcFyMtoZULVfs4Gfa5AQOVItaTNIgTIuOb2YzKz9AA=
 github.com/acoshift/arpc/v2 v2.2.0/go.mod h1:EZ7M0MpTTDhD8+9k+PbvGGFAoHDhs12442A6VpNDS7A=
 github.com/acoshift/configfile v1.9.0 h1:/t8DhgBdYIr15f4BkkM4bDSBWi0+ImKwWgJN/M5Hbb0=

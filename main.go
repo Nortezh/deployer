@@ -271,6 +271,9 @@ func (w *Worker) Run() {
 		case x.DiskCreate != nil:
 			x := x.DiskCreate
 			w.diskCreate(ctx, x)
+		case x.DiskUpdate != nil:
+			x := x.DiskUpdate
+			w.diskUpdate(ctx, x)
 		case x.DiskDelete != nil:
 			x := x.DiskDelete
 			w.diskDelete(ctx, x)
@@ -1002,7 +1005,7 @@ func (w *Worker) diskCreate(ctx context.Context, it *api.DeployerCommandDiskCrea
 	err := w.Client.CreatePersistentVolumeClaim(ctx, k8s.PersistentVolumeClaim{
 		ID:           id,
 		ProjectID:    projectID,
-		Size:         it.Size,
+		SizeInMB:     it.Size,
 		StorageClass: storageClass,
 		AccessModes: []v1.PersistentVolumeAccessMode{
 			v1.ReadWriteMany,
@@ -1017,6 +1020,31 @@ func (w *Worker) diskCreate(ctx context.Context, it *api.DeployerCommandDiskCrea
 
 	w.results = append(w.results, &api.DeployerSetResultItem{
 		DiskCreate: &api.DeployerSetResultItemGeneral{
+			ID: it.ID,
+		},
+	})
+}
+
+func (w *Worker) diskUpdate(ctx context.Context, it *api.DeployerCommandDiskUpdate) {
+	slog.Info("disk: updating", "id", it.ID)
+
+	id := resourceID(it.ProjectID, it.Name)
+	projectID := idString(it.ProjectID)
+
+	err := w.Client.UpdatePersistentVolumeClaim(ctx, k8s.PersistentVolumeClaim{
+		ID:        id,
+		ProjectID: projectID,
+		SizeInMB:  it.Size,
+	})
+	if err != nil {
+		slog.Error("disk: updating error", "id", it.ID, "error", err)
+		return
+	}
+
+	slog.Info("disk: updated", "id", it.ID)
+
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		DiskUpdate: &api.DeployerSetResultItemGeneral{
 			ID: it.ID,
 		},
 	})

@@ -15,7 +15,7 @@ import (
 type PersistentVolumeClaim struct {
 	ID           string
 	ProjectID    string
-	Size         int64
+	SizeInMB     int64
 	StorageClass string
 	AccessModes  []v1.PersistentVolumeAccessMode
 }
@@ -51,7 +51,7 @@ func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, obj Persistent
 
 	pvc.Spec.Resources = v1.VolumeResourceRequirements{
 		Requests: v1.ResourceList{
-			"storage": resource.MustParse(strconv.FormatInt(obj.Size, 10) + "Gi"),
+			"storage": resource.MustParse(strconv.FormatInt(obj.SizeInMB, 10) + "Mi"),
 		},
 	}
 	if obj.StorageClass != "" {
@@ -62,6 +62,32 @@ func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, obj Persistent
 	if errors.IsNotFound(err) {
 		_, err = s.Create(ctx, pvc, metav1.CreateOptions{})
 	}
+	return err
+}
+
+func (c *Client) UpdatePersistentVolumeClaim(ctx context.Context, obj PersistentVolumeClaim) error {
+	s := c.client.CoreV1().PersistentVolumeClaims(c.namespace)
+
+	pvc, err := s.Get(ctx, obj.ID, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	pvc.Spec.Resources = v1.VolumeResourceRequirements{
+		Requests: v1.ResourceList{
+			"storage": resource.MustParse(strconv.FormatInt(obj.SizeInMB, 10) + "Mi"),
+		},
+	}
+
+	if obj.StorageClass != "" {
+		pvc.Spec.StorageClassName = pointer.String(obj.StorageClass)
+	}
+
+	if len(obj.AccessModes) > 0 {
+		pvc.Spec.AccessModes = obj.AccessModes
+	}
+
+	_, err = s.Update(ctx, pvc, metav1.UpdateOptions{})
 	return err
 }
 

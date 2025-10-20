@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	cloud.google.com/go/pubsub v1.47.0
-	github.com/Nortezh/api v1.2.3
+	github.com/Nortezh/api v1.2.5
 	github.com/acoshift/configfile v1.9.0
 	github.com/cert-manager/cert-manager v1.16.2
 	github.com/redis/go-redis/v9 v9.5.1
