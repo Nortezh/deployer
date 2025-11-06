@@ -96,7 +96,7 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 	cj.Spec = batchv1.CronJobSpec{} // reset
 	cj.Spec.Schedule = obj.Schedule
 	cj.Spec.StartingDeadlineSeconds = pointer.Int64(600)
-	cj.Spec.ConcurrencyPolicy = batchv1.ForbidConcurrent
+	cj.Spec.ConcurrencyPolicy = batchv1.ReplaceConcurrent
 	cj.Spec.SuccessfulJobsHistoryLimit = pointer.Int32(1)
 	cj.Spec.FailedJobsHistoryLimit = pointer.Int32(1)
 	cj.Spec.JobTemplate.ObjectMeta = metav1.ObjectMeta{
