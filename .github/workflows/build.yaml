@@ -31,22 +31,3 @@ jobs:
           provenance: false
           push: true
           tags: ${{ env.IMAGE_NAME}}:${{ github.sha }}
-  deploy:
-    runs-on: ubuntu-latest
-    name: Deploy
-    needs: build
-    steps:
-      - uses: google-github-actions/auth@v1
-        id: auth
-        with:
-          credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
-          token_format: access_token
-          access_token_scopes: https://www.googleapis.com/auth/userinfo.email
-      - uses: deploys-app/deploys-action@v1
-        with:
-          project: nortezh
-          location: gke.cluster-rcf2
-          name: api-stag
-          image: ${{ env.IMAGE_NAME}}:${{ github.sha }}
-        env:
-          DEPLOYS_TOKEN: ${{ steps.auth.outputs.access_token }}
