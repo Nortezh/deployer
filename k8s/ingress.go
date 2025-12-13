@@ -106,12 +106,15 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 		annotation["parapet.moonrhythm.io/forward-auth"] = string(b)
 	}
 
+	// NOTE: adding rewrite path will remove strip-prefix annotation
 	if a := x.Config.RewritePath; a != nil {
 		b, _ := yaml.Marshal(map[string]interface{}{
-			"^" + x.Path + "$": *x.Config.RewritePath,
+			"^" + x.Path + "(?:/(.*))?$": *x.Config.RewritePath,
 		})
 
 		annotation["parapet.moonrhythm.io/rewrite"] = string(b)
+
+		delete(annotation, "parapet.moonrhythm.io/strip-prefix")
 	}
 
 	ing := &networking.Ingress{
