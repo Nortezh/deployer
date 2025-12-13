@@ -106,6 +106,14 @@ func (c *Client) CreateIngress(ctx context.Context, x Ingress) error {
 		annotation["parapet.moonrhythm.io/forward-auth"] = string(b)
 	}
 
+	if a := x.Config.RewritePath; a != nil {
+		b, _ := yaml.Marshal(map[string]interface{}{
+			"^" + x.Path + "$": *x.Config.RewritePath,
+		})
+
+		annotation["parapet.moonrhythm.io/rewrite"] = string(b)
+	}
+
 	ing := &networking.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: x.ID,
