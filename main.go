@@ -29,16 +29,41 @@ import (
 )
 
 func main() {
+	ctx := context.Background()
+
 	cfg := configfile.NewEnvReader()
 
 	locationID := cfg.MustString("location")
 	projectID := cfg.String("project_id")
-	namespace := cfg.String("namespace")
 	apiEndpoint := cfg.String("api_endpoint")
 
 	token := cfg.String("token")
 	if token == "" {
 		slog.Error("token required")
+		os.Exit(1)
+	}
+
+	deployer := (&client.Client{
+		HTTPClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+		Endpoint: apiEndpoint,
+		Auth: func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+token)
+		},
+	}).Deployer()
+
+	location, err := deployer.GetLocation(ctx, &api.Empty{})
+
+	if err != nil {
+		slog.Error("can not get location from api", "error", err)
+		os.Exit(1)
+	}
+
+	namespace := location.Namespace
+
+	if namespace == "" {
+		slog.Error("can not get location's name")
 		os.Exit(1)
 	}
 
@@ -66,8 +91,6 @@ func main() {
 		"namespace", namespace,
 		"api_endpoint", apiEndpoint,
 	)
-
-	ctx := context.Background()
 
 	chEvent := make(chan struct{})
 
@@ -115,17 +138,8 @@ func main() {
 		}
 	}
 
-	deployer := (&client.Client{
-		HTTPClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-		Endpoint: apiEndpoint,
-		Auth: func(r *http.Request) {
-			r.Header.Set("Authorization", "Bearer "+token)
-		},
-	}).Deployer()
-
 	w := Worker{
+		location:     location,
 		Deployer:     deployer,
 		Client:       k8sClient,
 		RuntimeClass: cfg.String("runtime_class"),
@@ -227,15 +241,6 @@ func (w *Worker) targetCPUPercent(request, limit string) int {
 
 func (w *Worker) Run() {
 	ctx := context.Background()
-
-	if w.location == nil {
-		var err error
-		w.location, err = w.Deployer.GetLocation(ctx, &api.Empty{})
-		if err != nil {
-			slog.Error("can not get location from api", "error", err)
-			return
-		}
-	}
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
