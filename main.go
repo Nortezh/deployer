@@ -297,6 +297,12 @@ func (w *Worker) Run() {
 			x := x.RouteDelete
 			w.routeDelete(ctx, x)
 			forceFlush = true
+		case x.NetworkPolicyProjectIsolationUpsert != nil:
+			x := x.NetworkPolicyProjectIsolationUpsert
+			w.networkPolicyProjectIsolationUpsert(ctx, x)
+		case x.NetworkPolicyProjectIsolationDelete != nil:
+			x := x.NetworkPolicyProjectIsolationDelete
+			w.networkPolicyProjectIsolationDelete(ctx, x)
 		}
 
 		if forceFlush || len(w.results) > 3 {
@@ -1191,6 +1197,63 @@ func (w *Worker) routeDelete(ctx context.Context, it *api.DeployerCommandRouteDe
 	w.results = append(w.results, &api.DeployerSetResultItem{
 		RouteDelete: &api.DeployerSetResultItemGeneral{
 			ID: it.ID,
+		},
+	})
+}
+
+func (w *Worker) networkPolicyProjectIsolationUpsert(ctx context.Context, it *api.DeployerCommandNetworkPolicyProjectIsolationUpsert) {
+	slog.Info("network policy project isolation: upserting", "id", it.ID)
+
+	id := resourceID(it.ProjectID, "project-isolation")
+	projectID := idString(it.ProjectID)
+
+	var allowProjectIDs []string
+
+	for _, allProjectID := range it.AllowIncomingProjectIDs {
+		allowProjectIDs = append(allowProjectIDs, idString(allProjectID))
+	}
+
+	err := w.Client.ApplyNetworkPolicy(ctx, k8s.NetworkPolicy{
+		ID:                      id,
+		ProjectID:               projectID,
+		AllowIncomingProjectIDs: allowProjectIDs,
+	})
+
+	if err != nil {
+		slog.Error("network policy project isolation: upserting : error", "id", id, "error", err)
+		return
+	}
+
+	slog.Info("network policy project isolation: upserted", "id", id)
+
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		NetworkPolicyProjectIsolationUpsert: &api.DeployerSetResultItemGeneralWithGeneration{
+			ID:         it.ID,
+			Location:   w.location.ID,
+			Generation: it.Generation,
+		},
+	})
+}
+
+func (w *Worker) networkPolicyProjectIsolationDelete(ctx context.Context, it *api.DeployerCommandNetworkPolicyProjectIsolationDelete) {
+	slog.Info("network policy project isolation: deleting", "id", it.ID)
+
+	id := resourceID(it.ProjectID, "project-isolation")
+
+	err := w.Client.DeleteNetworkPolicy(ctx, id)
+
+	if err != nil {
+		slog.Error("network policy project isolation: deleting : error", "id", id, "error", err)
+		return
+	}
+
+	slog.Info("network policy project isolation: deleted", "id", id)
+
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		NetworkPolicyProjectIsolationDelete: &api.DeployerSetResultItemGeneralWithGeneration{
+			ID:         it.ID,
+			Location:   w.location.ID,
+			Generation: it.Generation,
 		},
 	})
 }
