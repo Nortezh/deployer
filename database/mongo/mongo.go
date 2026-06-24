@@ -1,4 +1,4 @@
-package redis
+package mongo
 
 import (
 	"github.com/Nortezh/api"
@@ -8,12 +8,13 @@ import (
 
 type Engine struct{}
 
-func (Engine) Kind() string           { return "Redis" }
-func (Engine) Type() api.DatabaseType { return api.DatabaseTypeRedis }
+func (Engine) Kind() string           { return "Mongo" }
+func (Engine) Type() api.DatabaseType { return api.DatabaseTypeMongo }
 
 func (Engine) Spec(it *api.DeployerCommandDatabaseCreate, name string) map[string]any {
 	spec := map[string]any{
-		"password": it.Password, // redis: no user, no database
+		"user":     it.User,
+		"password": it.Password, // mongo: no database field
 		"storage":  database.StorageBlock(name, it.StorageSize, it.StorageClass),
 	}
 	if it.Image != "" {

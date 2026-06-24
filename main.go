@@ -24,6 +24,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	knet "k8s.io/apimachinery/pkg/util/net"
 
+	"github.com/deploys-app/deployer/database"
+	"github.com/deploys-app/deployer/database/mongo"
+	"github.com/deploys-app/deployer/database/postgres"
+	"github.com/deploys-app/deployer/database/redis"
 	"github.com/deploys-app/deployer/k8s"
 	// "github.com/deploys-app/deploys/logs"
 )
@@ -297,6 +301,10 @@ func (w *Worker) Run() {
 			x := x.RouteDelete
 			w.routeDelete(ctx, x)
 			forceFlush = true
+		case x.DatabaseCreate != nil:
+			w.databaseCreate(ctx, x.DatabaseCreate)
+		case x.DatabaseDelete != nil:
+			w.databaseDelete(ctx, x.DatabaseDelete)
 		case x.NetworkPolicyProjectIsolationUpsert != nil:
 			x := x.NetworkPolicyProjectIsolationUpsert
 			w.networkPolicyProjectIsolationUpsert(ctx, x)
@@ -1303,146 +1311,56 @@ func (w *Worker) workloadIdentityDelete(ctx context.Context, it *api.DeployerCom
 	})
 }
 
-// func (w *Worker) database(ctx context.Context) {
-// 	list, err := server.ListDatabases(ctx,
-// 		server.Status(api.Pending),
-// 		server.InLocation(w.Location.ID),
-// 		server.OrderByCreatedAtAsc(),
-// 	)
-// 	if err != nil {
-// 		logs.Errorf("database: can not list; %v", err)
-// 		logs.Report(err)
-// 		return
-// 	}
-//
-// 	for _, it := range list {
-// 		// processName := "database/" + it.ResourceID()
-// 		// _, ok := w.processList.Load(processName)
-// 		// if ok {
-// 		// 	continue
-// 		// }
-// 		//
-// 		// w.incrProcess()
-// 		// w.processList.Store(processName, struct{}{})
-//
-// 		// it := it
-//
-// 		// go func() {
-// 		// defer func() {
-// 		// 	w.processList.Delete(processName)
-// 		// 	w.decrProcess()
-// 		// }()
-//
-// 		switch it.Action {
-// 		case api.Create:
-// 			w.databaseCreate(ctx, it)
-// 		case api.Delete:
-// 			w.databaseDelete(ctx, it)
-// 		}
-// 		// }()
-// 	}
-// }
+func engineFor(t api.DatabaseType) database.Engine {
+	switch t {
+	case api.DatabaseTypePostgres:
+		return postgres.Engine{}
+	case api.DatabaseTypeRedis:
+		return redis.Engine{}
+	case api.DatabaseTypeMongo:
+		return mongo.Engine{}
+	}
+	return nil
+}
 
-// func (w *Worker) databaseCreate(ctx context.Context, it *server.Database) {
-// 	logs.Infof("database: %d, creating...", it.ID)
-//
-// 	id := it.ResourceID()
-// 	projectID := idString(it.ProjectID)
-//
-// 	f := func() error {
-// 		status, err := server.GetDatabaseStatus(ctx, it.ID)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		if status != api.Pending {
-// 			return nil
-// 		}
-//
-// 		switch it.DBName {
-// 		case "redis", "redislabs/redisearch":
-// 			d := redis.Deployer{Client: w.Client}
-// 			err = d.Deploy(ctx, redis.Config{
-// 				ID:         id,
-// 				Name:       it.Name,
-// 				ProjectID:  projectID,
-// 				Image:      it.DBName + ":" + latestIfEmpty(it.DBVersion),
-// 				Args:       it.Args,
-// 				DBSize:     parseInt64(it.Config["db_size"]),
-// 				Databases:  parseInt64(it.Config["databases"]),
-// 				RequestCPU: normalizeRequestCPU(it.CPU),
-// 				LimitCPU:   defaultLimitCPU,
-// 				Password:   it.Config["password"],
-// 			})
-// 			if err != nil {
-// 				return err
-// 			}
-// 		default:
-// 			return fmt.Errorf("invalid db name")
-// 		}
-//
-// 		err = server.SetDatabaseStatus(ctx, it.ID, api.Success)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		err = server.StampDatabaseSuccess(ctx, it.ID)
-// 		if err != nil {
-// 			return err
-// 		}
-//
-// 		return nil
-// 	}
-//
-// 	err := f()
-// 	if err != nil {
-// 		if err := server.SetDatabaseStatus(ctx, it.ID, api.Error); err != nil {
-// 			logs.Errorf("database: can not set error status for %d; %v", it.ID, err)
-// 		}
-// 		return
-// 	}
-//
-// 	logs.Infof("database: %d, created...", it.ID)
-// }
-//
-// func (w *Worker) databaseDelete(ctx context.Context, it *server.Database) {
-// 	logs.Infof("database: %d, deleting...", it.ID)
-//
-// 	id := it.ResourceID()
-//
-// 	err := pgctx.RunInTx(ctx, func(ctx context.Context) error {
-// 		status, err := server.GetDatabaseStatus(ctx, it.ID)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		if status != api.Pending {
-// 			return nil
-// 		}
-//
-// 		err = server.RemoveDatabase(ctx, it.ID)
-// 		if err != nil {
-// 			return err
-// 		}
-//
-// 		switch it.DBName {
-// 		case "redis":
-// 			d := redis.Deployer{Client: w.Client}
-// 			err = d.Delete(ctx, id)
-// 			if err != nil {
-// 				return err
-// 			}
-// 		default:
-// 			return fmt.Errorf("invalid db name")
-// 		}
-// 		return nil
-// 	})
-// 	if err != nil {
-// 		if err := server.SetDatabaseStatus(ctx, it.ID, api.Error); err != nil {
-// 			logs.Errorf("database: can not set error status for %d; %v", it.ID, err)
-// 		}
-// 		return
-// 	}
-//
-// 	logs.Infof("database: %d, deleted", it.ID)
-// }
+func (w *Worker) databaseCreate(ctx context.Context, it *api.DeployerCommandDatabaseCreate) {
+	eng := engineFor(it.Type)
+	if eng == nil {
+		slog.Error("database: unknown type", "id", it.ID, "type", it.Type)
+		return
+	}
+
+	host, port, ready, err := database.Apply(ctx, w.Client, eng, it)
+	if err != nil {
+		slog.Error("database: apply", "id", it.ID, "error", err)
+		return // stay pending, retry next poll
+	}
+	if !ready {
+		slog.Info("database: waiting for endpoint", "id", it.ID)
+		return // stay pending until kdb assigns host/port and the pod is serving
+	}
+
+	slog.Info("database: ready", "id", it.ID, "host", host, "port", port)
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		DatabaseCreate: &api.DeployerSetResultItemDatabaseCreate{
+			ID:      it.ID,
+			Success: true,
+			Host:    host,
+			Port:    port,
+		},
+	})
+}
+
+func (w *Worker) databaseDelete(ctx context.Context, it *api.DeployerCommandDatabaseMetadata) {
+	if err := database.Delete(ctx, w.Client, it.Type, it.ProjectID, it.Name); err != nil {
+		slog.Error("database: delete", "id", it.ID, "error", err)
+		return // stay pending, retry next poll
+	}
+	slog.Info("database: deleted", "id", it.ID)
+	w.results = append(w.results, &api.DeployerSetResultItem{
+		DatabaseDelete: &api.DeployerSetResultItemGeneral{ID: it.ID},
+	})
+}
 
 func idString(id int64) string {
 	return strconv.FormatInt(id, 10)
@@ -1513,7 +1431,7 @@ func resourceID(projectID int64, name string) string {
 	if projectID <= 0 || name == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s-%d", name, projectID)
+	return k8s.ResourceID(projectID, name)
 }
 
 func pullSecretResourceID(projectID int64, name string) string {
