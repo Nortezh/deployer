@@ -1,7 +1,10 @@
 package k8s
 
 import (
+	"fmt"
+
 	certmanager "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -9,6 +12,7 @@ import (
 type Client struct {
 	client            *kubernetes.Clientset
 	certManagerClient *certmanager.Clientset
+	dynamic           dynamic.Interface
 	namespace         string
 }
 
@@ -28,9 +32,15 @@ func NewClient(namespace string) (*Client, error) {
 		return nil, err
 	}
 
+	dyn, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Client{
 		client:            client,
 		certManagerClient: certManagerClient,
+		dynamic:           dyn,
 		namespace:         namespace,
 	}, nil
 }
@@ -51,11 +61,32 @@ func NewLocalClient(namespace string) (*Client, error) {
 		return nil, err
 	}
 
+	dyn, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Client{
 		client:            client,
 		certManagerClient: certManagerClient,
+		dynamic:           dyn,
 		namespace:         namespace,
 	}, nil
+}
+
+// Dynamic exposes the dynamic client for applying arbitrary CRs (e.g. kdb.io managed databases).
+func (c *Client) Dynamic() dynamic.Interface { return c.dynamic }
+
+// Namespace is the deployer's configured namespace (app workloads).
+func (c *Client) Namespace() string { return c.namespace }
+
+// DBNamespace is the dedicated namespace for managed-database CRs (<namespace>-database).
+func (c *Client) DBNamespace() string { return c.namespace + "-database" }
+
+// ResourceID is the canonical k8s resource name for a project-scoped resource: "<name>-<projectID>".
+// Single source of truth — main's private resourceID delegates here.
+func ResourceID(projectID int64, name string) string {
+	return fmt.Sprintf("%s-%d", name, projectID)
 }
 
 // func getServicePort(namespace, serviceName, portName string) int {
