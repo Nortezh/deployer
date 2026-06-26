@@ -55,6 +55,22 @@ func (c *Client) ApplyNetworkPolicy(ctx context.Context, obj NetworkPolicy) erro
 		})
 	}
 
+	// Allow from the parapet ingress controller (API gateway) which runs in
+	// its own namespace; otherwise enabling the policy blocks all gateway
+	// traffic to the project.
+	ingressPeers = append(ingressPeers, networkingv1.NetworkPolicyPeer{
+		NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{
+				"kubernetes.io/metadata.name": "parapet-ingress-controller",
+			},
+		},
+		PodSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{
+				"app": "parapet-ingress-controller",
+			},
+		},
+	})
+
 	if policy == nil {
 		policy = &networkingv1.NetworkPolicy{}
 	}
