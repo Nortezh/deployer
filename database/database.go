@@ -45,6 +45,37 @@ func StorageBlock(name string, sizeMB int64, class string) map[string]any {
 	}
 }
 
+// ResourcesBlock builds the kdb spec.resources block from the command's resources, including only the
+// non-empty cpu/memory values. Returns nil when nothing is set, so the leaf omits the block entirely
+// and the operator applies its own defaults.
+func ResourcesBlock(r api.DatabaseResources) map[string]any {
+	requests := map[string]any{}
+	limits := map[string]any{}
+	if r.Requests.CPU != "" {
+		requests["cpu"] = r.Requests.CPU
+	}
+	if r.Requests.Memory != "" {
+		requests["memory"] = r.Requests.Memory
+	}
+	if r.Limits.CPU != "" {
+		limits["cpu"] = r.Limits.CPU
+	}
+	if r.Limits.Memory != "" {
+		limits["memory"] = r.Limits.Memory
+	}
+	out := map[string]any{}
+	if len(requests) > 0 {
+		out["requests"] = requests
+	}
+	if len(limits) > 0 {
+		out["limits"] = limits
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // Apply does create-or-get of the engine's CR in the DB namespace, then reads status.
 // ready iff the operator has finished (phase Running/Ready) AND host+port are populated.
 func Apply(ctx context.Context, c *k8s.Client, eng Engine, it *api.DeployerCommandDatabaseCreate) (host string, port int, ready bool, err error) {
