@@ -12,16 +12,23 @@ func (Engine) Kind() string           { return "Postgres" }
 func (Engine) Type() api.DatabaseType { return api.DatabaseTypePostgres }
 
 func (Engine) Spec(it *api.DeployerCommandDatabaseCreate, name string) map[string]any {
+	cfg := it.PostgresConfig
+	if cfg == nil {
+		cfg = &api.DatabaseConfigPostgres{}
+	}
 	spec := map[string]any{
-		"user":     it.User,
-		"password": it.Password,
+		"user":     cfg.User,
+		"password": cfg.Password,
 		"storage":  database.StorageBlock(name, it.StorageSize, it.StorageClass),
 	}
-	if it.Database != "" {
-		spec["database"] = it.Database // POSTGRES_DB; postgres-only
+	if cfg.Database != "" {
+		spec["database"] = cfg.Database // POSTGRES_DB; postgres-only
 	}
 	if it.Image != "" {
 		spec["image"] = it.Image
+	}
+	if r := database.ResourcesBlock(it.Resources); r != nil {
+		spec["resources"] = r
 	}
 	return spec
 }
