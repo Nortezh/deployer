@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
@@ -135,8 +136,9 @@ func main() {
 		RuntimeClass: cfg.String("runtime_class"),
 		H2CP:         cfg.Bool("h2cp"),
 		Cert:         cfg.Bool("cert"),
-		CPULimit:     cfg.StringDefault("cpu_limit", defaultLimitCPU),
-		MemoryLimit:  cfg.StringDefault("memory_limit", defaultMemoryLimit),
+		CPULimit:      cfg.StringDefault("cpu_limit", defaultLimitCPU),
+		MemoryLimit:   cfg.StringDefault("memory_limit", defaultMemoryLimit),
+		GoogleAuthURL: cfg.String("google_auth_url"),
 	}
 
 	stop := make(chan os.Signal, 1)
@@ -168,6 +170,9 @@ type Worker struct {
 	Cert         bool // manage cert using cert manager
 	CPULimit     string
 	MemoryLimit  string
+	// base URL of the in-cluster authgate verifier (e.g. http://authgate.authgate.svc.cluster.local:8080);
+	// empty disables the per-deployment google-auth gate
+	GoogleAuthURL string
 
 	// state
 	location *api.LocationItem
@@ -216,6 +221,27 @@ func (w *Worker) normalizeLimitCPU(limit string) string {
 		return "1"
 	}
 	return limit
+}
+
+// googleAuthConfig builds the external-ingress config that gates a deployment behind the
+// authgate verifier when google auth is enabled. Returns a zero config (no auth annotation)
+// when disabled, when the allowlist is empty, or when the cluster has no verifier URL.
+func (w *Worker) googleAuthConfig(g *api.GoogleAuthConfig) api.RouteConfig {
+	if g == nil || !g.Enabled || w.GoogleAuthURL == "" {
+		return api.RouteConfig{}
+	}
+	allow := g.Allow()
+	if len(allow) == 0 {
+		return api.RouteConfig{}
+	}
+	target := strings.TrimSuffix(w.GoogleAuthURL, "/") + "/auth?allow=" + url.QueryEscape(strings.Join(allow, ","))
+	return api.RouteConfig{
+		ForwardAuth: &api.RouteConfigForwardAuth{
+			Target:              target,
+			AuthResponseHeaders: []string{"X-Auth-Email"},
+			// AuthRequestHeaders intentionally empty so parapet forwards the Cookie to /auth
+		},
+	}
 }
 
 // target for 1 limit cpu (for single thread application)
@@ -512,6 +538,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 					ProjectID: projectID,
 					Domain:    fmt.Sprintf("%s%s", id, w.location.DomainSuffix),
 					Path:      "/",
+					Config:    w.googleAuthConfig(it.Spec.GoogleAuth),
 				})
 				if err != nil {
 					slog.Error("deployment: creating external ingress error", "id", it.ID, "error", err)
