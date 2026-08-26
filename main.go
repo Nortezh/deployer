@@ -131,11 +131,11 @@ func main() {
 	}).Deployer()
 
 	w := Worker{
-		Deployer:     deployer,
-		Client:       k8sClient,
-		RuntimeClass: cfg.String("runtime_class"),
-		H2CP:         cfg.Bool("h2cp"),
-		Cert:         cfg.Bool("cert"),
+		Deployer:      deployer,
+		Client:        k8sClient,
+		RuntimeClass:  cfg.String("runtime_class"),
+		H2CP:          cfg.Bool("h2cp"),
+		Cert:          cfg.Bool("cert"),
 		CPULimit:      cfg.StringDefault("cpu_limit", defaultLimitCPU),
 		MemoryLimit:   cfg.StringDefault("memory_limit", defaultMemoryLimit),
 		GoogleAuthURL: cfg.String("google_auth_url"),
@@ -286,6 +286,10 @@ func (w *Worker) Run() {
 		forceFlush := false
 
 		switch {
+		case x.SecretUpsert != nil:
+			w.secretUpsert(ctx, x.SecretUpsert)
+		case x.SecretDelete != nil:
+			w.secretDelete(ctx, x.SecretDelete)
 		case x.PullSecretCreate != nil:
 			x := x.PullSecretCreate
 			w.pullSecretCreate(ctx, x)
@@ -360,6 +364,39 @@ func (w *Worker) flushResults() {
 		return
 	}
 	w.results = nil
+}
+
+func (w *Worker) secretUpsert(ctx context.Context, it *api.DeployerCommandSecretUpsert) {
+	slog.Info("secret: upserting", "id", it.SecretID, "revision", it.Revision)
+
+	result := &api.DeployerSetResultItemSecret{SecretID: it.SecretID, Revision: it.Revision}
+	err := w.Client.UpsertSecretKey(ctx, k8s.SecretKey{
+		ID:        resourceID(it.ProjectID, "secrets"),
+		ProjectID: idString(it.ProjectID),
+		Key:       it.Name,
+		Value:     []byte(it.Value),
+	})
+	if err != nil {
+		slog.Error("secret: upserting error", "id", it.SecretID, "revision", it.Revision, "error", err)
+	} else {
+		result.Success = true
+		slog.Info("secret: upserted", "id", it.SecretID, "revision", it.Revision)
+	}
+	w.results = append(w.results, &api.DeployerSetResultItem{SecretUpsert: result})
+}
+
+func (w *Worker) secretDelete(ctx context.Context, it *api.DeployerCommandSecretDelete) {
+	slog.Info("secret: deleting", "id", it.SecretID, "revision", it.Revision)
+
+	result := &api.DeployerSetResultItemSecret{SecretID: it.SecretID, Revision: it.Revision}
+	err := w.Client.DeleteSecretKey(ctx, resourceID(it.ProjectID, "secrets"), it.Name)
+	if err != nil {
+		slog.Error("secret: deleting error", "id", it.SecretID, "revision", it.Revision, "error", err)
+	} else {
+		result.Success = true
+		slog.Info("secret: deleted", "id", it.SecretID, "revision", it.Revision)
+	}
+	w.results = append(w.results, &api.DeployerSetResultItem{SecretDelete: result})
 }
 
 func (w *Worker) pullSecretCreate(ctx context.Context, it *api.DeployerCommandPullSecretCreate) {

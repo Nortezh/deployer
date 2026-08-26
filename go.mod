@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	cloud.google.com/go/pubsub v1.47.0
-	github.com/Nortezh/api v1.3.5-alpha.google-auth.2
+	github.com/Nortezh/api v1.3.6-alpha.secret-sync.1
 	github.com/acoshift/configfile v1.9.0
 	github.com/cert-manager/cert-manager v1.16.2
 	github.com/samber/lo v1.49.1
@@ -50,6 +50,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/moonrhythm/validator v1.3.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
@@ -72,6 +73,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250124145028-65684f501c47 // indirect
 	google.golang.org/grpc v1.70.0 // indirect
 	google.golang.org/protobuf v1.36.4 // indirect
+	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiextensions-apiserver v0.31.1 // indirect

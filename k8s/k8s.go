@@ -10,7 +10,7 @@ import (
 )
 
 type Client struct {
-	client            *kubernetes.Clientset
+	client            kubernetes.Interface
 	certManagerClient *certmanager.Clientset
 	dynamic           dynamic.Interface
 	namespace         string
