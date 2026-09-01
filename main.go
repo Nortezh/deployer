@@ -449,6 +449,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 
 	id := resourceID(it.ProjectID, it.Name)
 	projectID := idString(it.ProjectID)
+	secretName := resourceID(it.ProjectID, "secrets")
 
 	var result api.DeployerSetResultItemDeploy
 
@@ -503,6 +504,8 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Revision:      it.Revision,
 				Image:         it.Spec.Image,
 				Env:           it.Spec.Env,
+				SecretEnvs:    it.Spec.SecretEnvs,
+				SecretName:    secretName,
 				Command:       it.Spec.Command,
 				Args:          it.Spec.Args,
 				Replicas:      it.Spec.MinReplicas,
@@ -627,6 +630,8 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Revision:      it.Revision,
 				Image:         it.Spec.Image,
 				Env:           it.Spec.Env,
+				SecretEnvs:    it.Spec.SecretEnvs,
+				SecretName:    secretName,
 				Command:       it.Spec.Command,
 				Args:          it.Spec.Args,
 				Replicas:      it.Spec.MinReplicas,
@@ -699,6 +704,8 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Revision:      it.Revision,
 				Image:         it.Spec.Image,
 				Env:           it.Spec.Env,
+				SecretEnvs:    it.Spec.SecretEnvs,
+				SecretName:    secretName,
 				Command:       it.Spec.Command,
 				Args:          it.Spec.Args,
 				Schedule:      it.Spec.Schedule,
@@ -748,6 +755,8 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Revision:      it.Revision,
 				Image:         it.Spec.Image,
 				Env:           it.Spec.Env,
+				SecretEnvs:    it.Spec.SecretEnvs,
+				SecretName:    secretName,
 				Command:       it.Spec.Command,
 				Args:          it.Spec.Args,
 				Replicas:      1,
@@ -823,6 +832,8 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				Revision:      it.Revision,
 				Image:         it.Spec.Image,
 				Env:           it.Spec.Env,
+				SecretEnvs:    it.Spec.SecretEnvs,
+				SecretName:    secretName,
 				Command:       it.Spec.Command,
 				Args:          it.Spec.Args,
 				Replicas:      it.Spec.MinReplicas,

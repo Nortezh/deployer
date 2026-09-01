@@ -57,6 +57,8 @@ type Deployment struct {
 	Revision      int64
 	Image         string
 	Env           Env
+	SecretEnvs    []api.DeployerCommandDeploymentSecretEnv
+	SecretName    string
 	Command       []string
 	Args          []string
 	SA            string
@@ -327,7 +329,10 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		deploy.Spec.Template.Spec.RuntimeClassName = &obj.RuntimeClass
 	}
 
-	env := obj.Env.envVars()
+	env, err := obj.Env.envVarsWithSecrets(obj.SecretName, obj.SecretEnvs)
+	if err != nil {
+		return err
+	}
 	env = append(env, v1.EnvVar{
 		Name: "K_IP",
 		ValueFrom: &v1.EnvVarSource{

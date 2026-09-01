@@ -23,6 +23,8 @@ type CronJob struct {
 	Revision      int64
 	Image         string
 	Env           Env
+	SecretEnvs    []api.DeployerCommandDeploymentSecretEnv
+	SecretName    string
 	Command       []string
 	Args          []string
 	SA            string
@@ -140,12 +142,16 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 	if err != nil {
 		return err
 	}
+	env, err := obj.Env.envVarsWithSecrets(obj.SecretName, obj.SecretEnvs)
+	if err != nil {
+		return err
+	}
 
 	app := v1.Container{
 		Name:            "app",
 		Image:           obj.Image,
 		ImagePullPolicy: imagePullPolicy(obj.Image),
-		Env:             obj.Env.envVars(),
+		Env:             env,
 		Command:         obj.Command,
 		Args:            obj.Args,
 		Resources: v1.ResourceRequirements{
