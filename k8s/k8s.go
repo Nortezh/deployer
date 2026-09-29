@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"fmt"
+	"os"
 
 	certmanager "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	"k8s.io/client-go/dynamic"
@@ -46,8 +47,12 @@ func NewClient(namespace string) (*Client, error) {
 }
 
 func NewLocalClient(namespace string) (*Client, error) {
+	host := os.Getenv("KUBE_PROXY_URL")
+	if host == "" {
+		host = "http://localhost:8001"
+	}
 	config := &rest.Config{
-		Host:    "localhost:8001",
+		Host:    host,
 		APIPath: "/",
 	}
 
@@ -76,6 +81,9 @@ func NewLocalClient(namespace string) (*Client, error) {
 
 // Dynamic exposes the dynamic client for applying arbitrary CRs (e.g. kdb.io managed databases).
 func (c *Client) Dynamic() dynamic.Interface { return c.dynamic }
+
+// Core exposes the typed client for CNPG credential and CA Secrets.
+func (c *Client) Core() kubernetes.Interface { return c.client }
 
 // Namespace is the deployer's configured namespace (app workloads).
 func (c *Client) Namespace() string { return c.namespace }
