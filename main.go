@@ -1430,11 +1430,11 @@ func (w *Worker) databaseCreate(ctx context.Context, it *api.DeployerCommandData
 		if !w.CNPG.Enabled() {
 			return
 		}
-		if it.PostgresConfig == nil || it.PostgresConfig.Database == "" {
+		if it.PostgresConfig == nil || it.PostgresConfig.User == "" || it.PostgresConfig.Password == "" {
 			w.results = append(w.results, &api.DeployerSetResultItem{
 				DatabaseCreate: &api.DeployerSetResultItemDatabaseCreate{
-					ID: it.ID, ResultVersion: 2, FailureCode: "CNPG_DATABASE_REQUIRED",
-					FailureMessage: "a database name is required for this disposable CNPG spike",
+					ID: it.ID, ResultVersion: 2, FailureCode: "CNPG_CONFIG_REQUIRED",
+					FailureMessage: "user and password are required for this disposable CNPG spike",
 				},
 			})
 			return

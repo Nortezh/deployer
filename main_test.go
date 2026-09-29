@@ -69,7 +69,7 @@ func TestCNPGSpikeFailsClosedWithoutAClient(t *testing.T) {
 	}
 	w.CNPG = cnpg.Profile{HostSuffix: ".localhost", Port: "6109", EntryPoint: "tcp-6109", NodeName: "local", StorageClass: "local-path", Image: "pinned"}
 	w.databaseCreate(context.Background(), it)
-	if len(w.results) != 1 || w.results[0].DatabaseCreate.Success || w.results[0].DatabaseCreate.FailureCode != "CNPG_DATABASE_REQUIRED" {
+	if len(w.results) != 1 || w.results[0].DatabaseCreate.Success || w.results[0].DatabaseCreate.FailureCode != "CNPG_CONFIG_REQUIRED" {
 		t.Fatal("invalid CNPG create did not return a bounded failure")
 	}
 }

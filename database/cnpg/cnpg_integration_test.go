@@ -15,6 +15,16 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+func TestEffectiveConfig(t *testing.T) {
+	for _, tt := range []struct{ input, want string }{{"", "appuser"}, {"orders", "orders"}} {
+		cfg := &api.DatabaseConfigPostgres{User: "appuser", Password: "test", Database: tt.input}
+		got := effectiveConfig(cfg)
+		if got.Database != tt.want || cfg.Database != tt.input {
+			t.Fatalf("database %q: resolved %q, command changed to %q", tt.input, got.Database, cfg.Database)
+		}
+	}
+}
+
 // Run only against the isolated k3d cluster with kubectl proxy on localhost:8001.
 func TestDisposableCNPG(t *testing.T) {
 	if os.Getenv("CNPG_TEST_PASSWORD") == "" {
@@ -32,7 +42,7 @@ func TestDisposableCNPG(t *testing.T) {
 	id, _ := strconv.ParseInt(hex.EncodeToString(entropy[:7]), 16, 64)
 	it := &api.DeployerCommandDatabaseCreate{
 		ID: id, ProjectID: 99007, Name: "slice07-cnpg", Type: api.DatabaseTypePostgres, Provider: api.DatabaseProviderCNPG,
-		PostgresConfig: &api.DatabaseConfigPostgres{User: "app", Password: os.Getenv("CNPG_TEST_PASSWORD"), Database: "app"},
+		PostgresConfig: &api.DatabaseConfigPostgres{User: "slice07app", Password: os.Getenv("CNPG_TEST_PASSWORD")}, // exercise kdb-compatible database default
 		StorageSize:    1024,
 	}
 	p := Profile{HostSuffix: ".localhost", Port: "6109", EntryPoint: "tcp-6109", NodeName: "k3d-nortezh-slice03-agent-0",

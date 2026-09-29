@@ -46,10 +46,19 @@ func owned(obj *unstructured.Unstructured, labels map[string]string) bool {
 	return obj.GetLabels()["nortezh.io/database-id"] == labels["nortezh.io/database-id"]
 }
 
+func effectiveConfig(cfg *api.DatabaseConfigPostgres) api.DatabaseConfigPostgres {
+	resolved := *cfg
+	if resolved.Database == "" {
+		resolved.Database = resolved.User // kdb's postgres image defaults POSTGRES_DB to POSTGRES_USER
+	}
+	return resolved
+}
+
 func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCreate, p Profile) (string, int, bool, error) {
-	if !p.Enabled() || it.PostgresConfig == nil || it.PostgresConfig.User == "" || it.PostgresConfig.Password == "" || it.PostgresConfig.Database == "" || it.StorageSize <= 0 {
+	if !p.Enabled() || it.PostgresConfig == nil || it.PostgresConfig.User == "" || it.PostgresConfig.Password == "" || it.StorageSize <= 0 {
 		return "", 0, false, errors.New("CNPG spike profile or database configuration missing")
 	}
+	cfg := effectiveConfig(it.PostgresConfig)
 	name, labels := identity(it)
 	host := name + p.HostSuffix
 	secretName := name + "-app"
@@ -78,7 +87,7 @@ func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 		spec := map[string]any{
 			"instances": int64(2), "imageName": p.Image,
 			"storage":      map[string]any{"storageClass": p.StorageClass, "size": fmt.Sprintf("%dMi", it.StorageSize), "pvcTemplate": map[string]any{"accessModes": []any{"ReadWriteOnce"}}},
-			"bootstrap":    map[string]any{"initdb": map[string]any{"database": it.PostgresConfig.Database, "owner": it.PostgresConfig.User, "secret": map[string]any{"name": secretName}}},
+			"bootstrap":    map[string]any{"initdb": map[string]any{"database": cfg.Database, "owner": cfg.User, "secret": map[string]any{"name": secretName}}},
 			"certificates": map[string]any{"serverAltDNSNames": []any{host}},
 		}
 		if resources := database.ResourcesBlock(it.Resources); resources != nil {
@@ -120,7 +129,7 @@ func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 	if err != nil || len(ca.Data["ca.crt"]) == 0 {
 		return "", 0, false, errors.New("CNPG CA unavailable")
 	}
-	if err := probe(ctx, host, p.Port, it.PostgresConfig, ca.Data["ca.crt"]); err != nil {
+	if err := probe(ctx, host, p.Port, &cfg, ca.Data["ca.crt"]); err != nil {
 		return "", 0, false, nil // retry; never disclose password, TLS or raw server errors
 	}
 	port, _ := strconv.Atoi(p.Port)
