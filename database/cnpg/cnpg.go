@@ -41,7 +41,7 @@ func (p Profile) Enabled() bool {
 		_, _, err := portBounds(p.PortRange)
 		// CNPG 1.27 has no whenDeleted policy field. Only explicitly disposable
 		// deletion is supported here; production retention remains gated off.
-		return err == nil && p.PVCRetention == "delete" && p.StorageClass != "" && p.Image != ""
+		return err == nil && p.PVCRetention == "delete" && p.StorageClass != "" && pinnedImage(p.Image)
 	}
 	port, _ := strconv.Atoi(p.Port)
 	return p.HostSuffix != "" && port > 0 && port <= 65535 && p.EntryPoint != "" && p.NodeName != "" && p.StorageClass != "" && p.Image != ""

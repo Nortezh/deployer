@@ -3,6 +3,7 @@ package cnpg
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
@@ -63,10 +64,18 @@ func TestSharedAllocator(t *testing.T) {
 	if _, err := reserve(ctx, client, "missing", "6200-6202", owner); err == nil {
 		t.Fatal("missing map accepted")
 	}
+	cm.Data["lb_6202"] = owner
+	cm.Data["lb_6203"] = owner
+	if _, err := client.CoreV1().ConfigMaps("allocator").Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reserve(ctx, client, "allocator", "6200-6203", owner); err == nil {
+		t.Fatal("duplicate owner allocation accepted")
+	}
 }
 
 func TestOperationalProfileFailsClosed(t *testing.T) {
-	good := Profile{AllocationNamespace: "allocator", PortRange: "6200-6202", PVCRetention: "delete", StorageClass: "test", Image: "pinned"}
+	good := Profile{AllocationNamespace: "allocator", PortRange: "6200-6202", PVCRetention: "delete", StorageClass: "test", Image: "registry/postgres@sha256:" + strings.Repeat("a", 64)}
 	if !good.Enabled() {
 		t.Fatal("explicit profile rejected")
 	}
@@ -76,6 +85,11 @@ func TestOperationalProfileFailsClosed(t *testing.T) {
 		if p.Enabled() {
 			t.Fatalf("accepted range %q", ports)
 		}
+	}
+	badImage := good
+	badImage.Image = "postgres:16"
+	if badImage.Enabled() {
+		t.Fatal("unpinned image accepted")
 	}
 	for _, policy := range []string{"", "retain", "unknown"} {
 		p := good

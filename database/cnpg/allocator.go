@@ -2,6 +2,7 @@ package cnpg
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -16,6 +17,15 @@ import (
 const allocationMap = "kdb-port-allocations"
 
 type endpoint struct{ Node, Host, Port string }
+
+func pinnedImage(image string) bool {
+	i := strings.LastIndex(image, "@sha256:")
+	if i <= 0 || len(image)-i != len("@sha256:")+64 {
+		return false
+	}
+	_, err := hex.DecodeString(image[i+len("@sha256:"):])
+	return err == nil
+}
 
 func portBounds(value string) (int, int, error) {
 	parts := strings.Split(value, "-")
@@ -63,16 +73,23 @@ func reserve(ctx context.Context, client kubernetes.Interface, namespace, ports,
 		if err != nil {
 			return err
 		}
+		var existing string
 		for key, value := range cm.Data {
 			if value != owner {
 				continue
 			}
-			i := strings.LastIndex(key, "_")
+			if existing != "" {
+				return errors.New("CNPG duplicate existing allocation")
+			}
+			existing = key
+		}
+		if existing != "" {
+			i := strings.LastIndex(existing, "_")
 			if i < 0 {
 				return errors.New("CNPG invalid existing allocation")
 			}
-			ep, ok := candidates[key[:i]]
-			port, err := strconv.Atoi(key[i+1:])
+			ep, ok := candidates[existing[:i]]
+			port, err := strconv.Atoi(existing[i+1:])
 			if !ok || err != nil || port < lo || port > hi {
 				return errors.New("CNPG existing allocation outside approved profile")
 			}

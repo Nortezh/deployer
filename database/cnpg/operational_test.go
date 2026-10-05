@@ -74,7 +74,7 @@ func TestAllocatedLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := Profile{AllocationNamespace: "allocator", PortRange: "6200-6202", PVCRetention: "delete", StorageClass: "test", Image: "pinned"}
+	p := Profile{AllocationNamespace: "allocator", PortRange: "6200-6202", PVCRetention: "delete", StorageClass: "test", Image: "registry/postgres@sha256:" + strings.Repeat("a", 64)}
 	it := &api.DeployerCommandDatabaseCreate{ID: 9, ProjectID: 2, Name: "orders", StorageSize: 1024, PostgresConfig: &api.DatabaseConfigPostgres{User: "app", Password: "test-only"}}
 	for i := 0; i < 2; i++ {
 		_, _, ready, err := Apply(context.Background(), client, it, p)
