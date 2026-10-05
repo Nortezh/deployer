@@ -18,6 +18,8 @@ cloud.google.com/go/pubsub v1.47.0/go.mod h1:LaENesmga+2u0nDtLkIOILskxsfvn/BXX9A
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/Nortezh/api v1.4.0 h1:0d9JZhQUmsq9AkyRHzAYLrLPXloEKP7QonRE7SwR0pQ=
 github.com/Nortezh/api v1.4.0/go.mod h1:Z7G8gUbLoW/yxkDJ9YAdLtCh0FcXPvDc/v72pfxJ2sg=
+github.com/Nortezh/api v1.5.0-dev.managed-postgres.1 h1:zFW7dNsMUx13K2gXPvkDpF+m8fvAtIzrcjIDAW4gbTY=
+github.com/Nortezh/api v1.5.0-dev.managed-postgres.1/go.mod h1:Z7G8gUbLoW/yxkDJ9YAdLtCh0FcXPvDc/v72pfxJ2sg=
 github.com/acoshift/arpc/v2 v2.2.0 h1:OKcFyMtoZULVfs4Gfa5AQOVItaTNIgTIuOb2YzKz9AA=
 github.com/acoshift/arpc/v2 v2.2.0/go.mod h1:EZ7M0MpTTDhD8+9k+PbvGGFAoHDhs12442A6VpNDS7A=
 github.com/acoshift/configfile v1.9.0 h1:/t8DhgBdYIr15f4BkkM4bDSBWi0+ImKwWgJN/M5Hbb0=
@@ -113,6 +115,8 @@ github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
 github.com/kr/pretty v0.3.1/go.mod h1:hoEshYVHaxMs3cyo3Yncou5ZscifuDolrwPKZanG3xk=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
+github.com/lib/pq v1.10.9 h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=
+github.com/lib/pq v1.10.9/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
 github.com/mailru/easyjson v0.7.7 h1:UGYAvKxe3sBsEDzO8ZeWOSlIQfWFlxbzLZe7hwFURr0=
 github.com/mailru/easyjson v0.7.7/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
 github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=

@@ -26,6 +26,7 @@ import (
 	knet "k8s.io/apimachinery/pkg/util/net"
 
 	"github.com/deploys-app/deployer/database"
+	"github.com/deploys-app/deployer/database/cnpg"
 	"github.com/deploys-app/deployer/database/mongo"
 	"github.com/deploys-app/deployer/database/postgres"
 	"github.com/deploys-app/deployer/database/redis"
@@ -141,6 +142,31 @@ func main() {
 		GoogleAuthURL: cfg.String("google_auth_url"),
 	}
 
+	// Location-owned opt-in. Invalid/missing settings fail closed; this path
+	// currently supports only explicit disposable PVC deletion, not production retention.
+	if cfg.Bool("cnpg_enabled") {
+		w.CNPG = cnpg.Profile{
+			AllocationNamespace: cfg.String("cnpg_allocation_namespace"),
+			PortRange:           cfg.String("cnpg_port_range"),
+			PVCRetention:        cfg.String("cnpg_pvc_retention"),
+			StorageClass:        cfg.String("cnpg_storage_class"),
+			Image:               cfg.String("cnpg_image"),
+		}
+		if w.CNPG.AllocationNamespace == "" || !w.CNPG.Enabled() {
+			slog.Error("CNPG enabled with incomplete or unsupported location profile")
+			os.Exit(1)
+		}
+	} else if cfg.Bool("local") && cfg.Bool("cnpg_disposable_spike") {
+		w.CNPG = cnpg.Profile{
+			HostSuffix:   cfg.String("cnpg_host_suffix"),
+			Port:         cfg.String("cnpg_port"),
+			EntryPoint:   cfg.String("cnpg_entrypoint"),
+			NodeName:     cfg.String("cnpg_route_node"),
+			StorageClass: cfg.String("cnpg_storage_class"),
+			Image:        cfg.String("cnpg_image"),
+		}
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM)
 
@@ -173,6 +199,7 @@ type Worker struct {
 	// base URL of the in-cluster authgate verifier (e.g. http://authgate.authgate.svc.cluster.local:8080);
 	// empty disables the per-deployment google-auth gate
 	GoogleAuthURL string
+	CNPG          cnpg.Profile // explicit location profile; empty profile fails closed
 
 	// state
 	location *api.LocationItem
@@ -1398,10 +1425,52 @@ func engineFor(t api.DatabaseType) database.Engine {
 	return nil
 }
 
+// Only legacy commands reach kdb. CNPG and unknown providers stay pending until
+// their own reconciler exists; never reinterpret them as legacy resources.
+func legacyEngineFor(t api.DatabaseType, provider api.DatabaseProvider) database.Engine {
+	if t == api.DatabaseTypePostgres {
+		if provider != "" && provider != api.DatabaseProviderKDB {
+			return nil
+		}
+	} else if provider != "" {
+		return nil
+	}
+	return engineFor(t)
+}
+
 func (w *Worker) databaseCreate(ctx context.Context, it *api.DeployerCommandDatabaseCreate) {
-	eng := engineFor(it.Type)
+	if it.Type == api.DatabaseTypePostgres && it.Provider == api.DatabaseProviderCNPG {
+		if !w.CNPG.Enabled() {
+			return
+		}
+		if it.PostgresConfig == nil || it.PostgresConfig.User == "" || it.PostgresConfig.Password == "" {
+			w.results = append(w.results, &api.DeployerSetResultItem{
+				DatabaseCreate: &api.DeployerSetResultItemDatabaseCreate{
+					ID: it.ID, ResultVersion: 2, FailureCode: "CNPG_CONFIG_REQUIRED",
+					FailureMessage: "user and password are required for CNPG",
+				},
+			})
+			return
+		}
+		host, port, ready, err := cnpg.Apply(ctx, w.Client, it, w.CNPG)
+		if err != nil {
+			slog.Error("database: CNPG create pending", "id", it.ID) // never log credentials or raw Kubernetes errors
+			return
+		}
+		if !ready {
+			return
+		}
+		w.results = append(w.results, &api.DeployerSetResultItem{
+			DatabaseCreate: &api.DeployerSetResultItemDatabaseCreate{
+				ID: it.ID, Success: true, Host: host, Port: port,
+				ResultVersion: 2, QueryReady: true, TLSReady: true,
+			},
+		})
+		return
+	}
+	eng := legacyEngineFor(it.Type, it.Provider)
 	if eng == nil {
-		slog.Error("database: unknown type", "id", it.ID, "type", it.Type)
+		slog.Error("database: unsupported type/provider", "id", it.ID, "type", it.Type, "provider", it.Provider)
 		return
 	}
 
@@ -1427,6 +1496,24 @@ func (w *Worker) databaseCreate(ctx context.Context, it *api.DeployerCommandData
 }
 
 func (w *Worker) databaseDelete(ctx context.Context, it *api.DeployerCommandDatabaseMetadata) {
+	if it.Type == api.DatabaseTypePostgres && it.Provider == api.DatabaseProviderCNPG {
+		if !w.CNPG.Enabled() {
+			return
+		}
+		deleted, err := cnpg.Delete(ctx, w.Client, it, w.CNPG)
+		if err != nil {
+			slog.Error("database: CNPG delete pending", "id", it.ID)
+			return
+		}
+		if deleted {
+			w.results = append(w.results, &api.DeployerSetResultItem{DatabaseDelete: &api.DeployerSetResultItemGeneral{ID: it.ID}})
+		}
+		return
+	}
+	if legacyEngineFor(it.Type, it.Provider) == nil {
+		slog.Error("database: unsupported type/provider", "id", it.ID, "type", it.Type, "provider", it.Provider)
+		return
+	}
 	if err := database.Delete(ctx, w.Client, it.Type, it.ProjectID, it.Name); err != nil {
 		slog.Error("database: delete", "id", it.ID, "error", err)
 		return // stay pending, retry next poll
