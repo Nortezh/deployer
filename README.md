@@ -4,13 +4,17 @@ Deployer agent operates within Kubernetes cluster,
 retrieves commands from API server then transforms commands to Kubernetes configurations,
 and applies those configurations to the cluster.
 
-## CNPG local development
+## CNPG
 
-CNPG remains disposable-only: `LOCAL=true`, `CNPG_DISPOSABLE_SPIKE=true`, and a
-complete explicit profile are required. There is no staging/prod runtime path.
-Endpoint allocation, TLS trust, operator installation, RBAC and PVC retention must
-be confirmed before implementing an operational path; do not use local mode to
-bypass these prerequisites on staging.
+The location-configured path is disabled unless `CNPG_ENABLED=true` and a complete
+profile is supplied: allocation namespace/range, digest-pinned PostgreSQL image,
+StorageClass, and `CNPG_PVC_RETENTION=delete`. It shares the KDB port-allocation
+ConfigMap and only supports disposable PVC deletion; production retention is not
+implemented. No location is enabled by this repository change. Do not enable it
+before reviewing endpoint, TLS, RBAC, backend compatibility and cleanup on target.
+
+The isolated local spike remains behind `LOCAL=true` and
+`CNPG_DISPOSABLE_SPIKE=true` with its separate explicit profile.
 
 Local checks use an HTTP mock, not a cluster. Disable the disposable integration
 opt-in when running them:
