@@ -142,8 +142,21 @@ func main() {
 		GoogleAuthURL: cfg.String("google_auth_url"),
 	}
 
-	// Explicit disposable-only opt-in; production deployers cannot mutate CNPG resources.
-	if cfg.Bool("local") && cfg.Bool("cnpg_disposable_spike") {
+	// Location-owned opt-in. Invalid/missing settings fail closed; this path
+	// currently supports only explicit disposable PVC deletion, not production retention.
+	if cfg.Bool("cnpg_enabled") {
+		w.CNPG = cnpg.Profile{
+			AllocationNamespace: cfg.String("cnpg_allocation_namespace"),
+			PortRange:           cfg.String("cnpg_port_range"),
+			PVCRetention:        cfg.String("cnpg_pvc_retention"),
+			StorageClass:        cfg.String("cnpg_storage_class"),
+			Image:               cfg.String("cnpg_image"),
+		}
+		if w.CNPG.AllocationNamespace == "" || !w.CNPG.Enabled() {
+			slog.Error("CNPG enabled with incomplete or unsupported location profile")
+			os.Exit(1)
+		}
+	} else if cfg.Bool("local") && cfg.Bool("cnpg_disposable_spike") {
 		w.CNPG = cnpg.Profile{
 			HostSuffix:   cfg.String("cnpg_host_suffix"),
 			Port:         cfg.String("cnpg_port"),
@@ -186,7 +199,7 @@ type Worker struct {
 	// base URL of the in-cluster authgate verifier (e.g. http://authgate.authgate.svc.cluster.local:8080);
 	// empty disables the per-deployment google-auth gate
 	GoogleAuthURL string
-	CNPG          cnpg.Profile // disposable spike; empty profile fails closed
+	CNPG          cnpg.Profile // explicit location profile; empty profile fails closed
 
 	// state
 	location *api.LocationItem
@@ -1434,7 +1447,7 @@ func (w *Worker) databaseCreate(ctx context.Context, it *api.DeployerCommandData
 			w.results = append(w.results, &api.DeployerSetResultItem{
 				DatabaseCreate: &api.DeployerSetResultItemDatabaseCreate{
 					ID: it.ID, ResultVersion: 2, FailureCode: "CNPG_CONFIG_REQUIRED",
-					FailureMessage: "user and password are required for this disposable CNPG spike",
+					FailureMessage: "user and password are required for CNPG",
 				},
 			})
 			return
@@ -1487,7 +1500,7 @@ func (w *Worker) databaseDelete(ctx context.Context, it *api.DeployerCommandData
 		if !w.CNPG.Enabled() {
 			return
 		}
-		deleted, err := cnpg.Delete(ctx, w.Client, it)
+		deleted, err := cnpg.Delete(ctx, w.Client, it, w.CNPG)
 		if err != nil {
 			slog.Error("database: CNPG delete pending", "id", it.ID)
 			return

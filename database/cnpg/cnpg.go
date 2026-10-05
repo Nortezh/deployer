@@ -1,5 +1,6 @@
-// Package cnpg is the disposable CNPG control-path spike. Its explicit profile is
-// deliberately required: an unconfigured deployer must never route CNPG to kdb.
+// Package cnpg reconciles explicitly selected CNPG databases with a required
+// location profile. An unconfigured deployer must never route CNPG to kdb.
+// The operational path currently requires explicit disposable-data deletion.
 package cnpg
 
 import (
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -27,12 +29,20 @@ import (
 var clusterGVR = schema.GroupVersionResource{Group: "postgresql.cnpg.io", Version: "v1", Resource: "clusters"}
 var routeGVR = schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "ingressroutetcps"}
 
-// Profile is local-only: no allocator, public DNS or production retention contract.
+// Profile settings are location-owned. AllocationNamespace selects the shared
+// KDB allocator; an empty value preserves the isolated local spike.
 type Profile struct {
 	HostSuffix, Port, EntryPoint, NodeName, StorageClass, Image string
+	AllocationNamespace, PortRange, PVCRetention                string
 }
 
 func (p Profile) Enabled() bool {
+	if p.AllocationNamespace != "" {
+		_, _, err := portBounds(p.PortRange)
+		// CNPG 1.27 has no whenDeleted policy field. Only explicitly disposable
+		// deletion is supported here; production retention remains gated off.
+		return err == nil && p.PVCRetention == "delete" && p.StorageClass != "" && p.Image != ""
+	}
 	port, _ := strconv.Atoi(p.Port)
 	return p.HostSuffix != "" && port > 0 && port <= 65535 && p.EntryPoint != "" && p.NodeName != "" && p.StorageClass != "" && p.Image != ""
 }
@@ -56,11 +66,18 @@ func effectiveConfig(cfg *api.DatabaseConfigPostgres) api.DatabaseConfigPostgres
 
 func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCreate, p Profile) (string, int, bool, error) {
 	if !p.Enabled() || it.PostgresConfig == nil || it.PostgresConfig.User == "" || it.PostgresConfig.Password == "" || it.StorageSize <= 0 {
-		return "", 0, false, errors.New("CNPG spike profile or database configuration missing")
+		return "", 0, false, errors.New("CNPG profile or database configuration missing")
 	}
 	cfg := effectiveConfig(it.PostgresConfig)
 	name, labels := identity(it)
 	host := name + p.HostSuffix
+	if p.AllocationNamespace != "" {
+		ep, err := reserve(ctx, c.Core(), p.AllocationNamespace, p.PortRange, allocationOwner(c.DBNamespace(), name, it.ID))
+		if err != nil {
+			return "", 0, false, err
+		}
+		host, p.Port, p.NodeName, p.EntryPoint = ep.Host, ep.Port, ep.Node, "tcp-"+ep.Port
+	}
 	secretName := name + "-app"
 	secrets := c.Core().CoreV1().Secrets(c.DBNamespace())
 	secret, err := secrets.Get(ctx, secretName, metav1.GetOptions{})
@@ -102,7 +119,21 @@ func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 	if err != nil || !owned(cluster, labels) {
 		return "", 0, false, errors.New("CNPG Cluster unavailable or owned by another database")
 	}
+	if p.AllocationNamespace != "" {
+		image, _, _ := unstructured.NestedString(cluster.Object, "spec", "imageName")
+		storage, _, _ := unstructured.NestedString(cluster.Object, "spec", "storage", "storageClass")
+		databaseName, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", "initdb", "database")
+		owner, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", "initdb", "owner")
+		hosts, _, _ := unstructured.NestedStringSlice(cluster.Object, "spec", "certificates", "serverAltDNSNames")
+		if image != p.Image || storage != p.StorageClass || databaseName != cfg.Database || owner != cfg.User || len(hosts) != 1 || hosts[0] != host {
+			return "", 0, false, errors.New("CNPG existing Cluster profile mismatch; explicit recovery required")
+		}
+	}
 
+	match := "HostSNI(`" + host + "`)"
+	if p.AllocationNamespace != "" {
+		match = "HostSNI(`*`)"
+	} // dedicated allocated port, not hostname routing
 	routes := c.Dynamic().Resource(routeGVR).Namespace(c.DBNamespace())
 	route, err := routes.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -110,12 +141,21 @@ func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 			"apiVersion": "traefik.io/v1alpha1", "kind": "IngressRouteTCP",
 			"metadata": map[string]any{"name": name, "namespace": c.DBNamespace(), "labels": map[string]any{"nortezh.io/database-id": labels["nortezh.io/database-id"], "kdb.io/lb-node": p.NodeName}},
 			"spec": map[string]any{"entryPoints": []any{p.EntryPoint}, "routes": []any{map[string]any{
-				"match": "HostSNI(`" + host + "`)", "services": []any{map[string]any{"name": name + "-rw", "port": int64(5432)}},
+				"match": match, "services": []any{map[string]any{"name": name + "-rw", "port": int64(5432)}},
 			}}, "tls": map[string]any{"passthrough": true}},
 		}}, metav1.CreateOptions{})
 	}
 	if err != nil || !owned(route, labels) {
 		return "", 0, false, errors.New("CNPG TCP route unavailable or owned by another database")
+	}
+	if p.AllocationNamespace != "" {
+		entries, _, _ := unstructured.NestedStringSlice(route.Object, "spec", "entryPoints")
+		passthrough, _, _ := unstructured.NestedBool(route.Object, "spec", "tls", "passthrough")
+		rules, _, _ := unstructured.NestedSlice(route.Object, "spec", "routes")
+		expected := []any{map[string]any{"match": match, "services": []any{map[string]any{"name": name + "-rw", "port": int64(5432)}}}}
+		if len(entries) != 1 || entries[0] != p.EntryPoint || !passthrough || route.GetLabels()["kdb.io/lb-node"] != p.NodeName || !reflect.DeepEqual(rules, expected) {
+			return "", 0, false, errors.New("CNPG existing route profile mismatch; explicit recovery required")
+		}
 	}
 
 	phase, _, _ := unstructured.NestedString(cluster.Object, "status", "phase")
@@ -183,9 +223,12 @@ func probe(ctx context.Context, host, port string, cfg *api.DatabaseConfigPostgr
 	return nil
 }
 
-// Delete waits until the Cluster is gone before removing this database's route
-// and credential. Disposable PVC cleanup is verified separately in the spike.
-func Delete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseMetadata) (bool, error) {
+// Delete waits for Cluster/route/credential cleanup. An operational profile
+// also requires PVC disappearance before releasing the reservation and acknowledging.
+func Delete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseMetadata, profiles ...Profile) (bool, error) {
+	if len(profiles) > 0 && !profiles[0].Enabled() {
+		return false, errors.New("CNPG deletion profile missing or unsupported")
+	}
 	name := k8s.ResourceID(it.ProjectID, it.Name)
 	labels := map[string]string{"nortezh.io/database-id": strconv.FormatInt(it.ID, 10)}
 	clusters := c.Dynamic().Resource(clusterGVR).Namespace(c.DBNamespace())
@@ -232,5 +275,21 @@ func Delete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseM
 	if !apierrors.IsNotFound(err) {
 		return false, errors.New("CNPG credential lookup failed")
 	}
+	if len(profiles) > 0 && profiles[0].AllocationNamespace != "" {
+		pvcs, err := c.Core().CoreV1().PersistentVolumeClaims(c.DBNamespace()).List(ctx, metav1.ListOptions{LabelSelector: "cnpg.io/cluster=" + name})
+		if err != nil {
+			return false, errors.New("CNPG PVC cleanup lookup failed")
+		}
+		if len(pvcs.Items) != 0 {
+			return false, nil
+		}
+		if err := release(ctx, c.Core(), profiles[0].AllocationNamespace, allocationOwner(c.DBNamespace(), name, it.ID)); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
+}
+
+func allocationOwner(namespace, name string, id int64) string {
+	return "cnpg:" + namespace + "/" + name + ":" + strconv.FormatInt(id, 10)
 }
