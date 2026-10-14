@@ -116,7 +116,7 @@ func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 			"spec":     spec,
 		}}, metav1.CreateOptions{})
 	}
-	if err != nil || !owned(cluster, labels) {
+	if err != nil || !owned(cluster, labels) || cluster.GetDeletionTimestamp() != nil {
 		return "", 0, false, errors.New("CNPG Cluster unavailable or owned by another database")
 	}
 	if p.AllocationNamespace != "" {
@@ -125,7 +125,11 @@ func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 		databaseName, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", "initdb", "database")
 		owner, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", "initdb", "owner")
 		hosts, _, _ := unstructured.NestedStringSlice(cluster.Object, "spec", "certificates", "serverAltDNSNames")
-		if image != p.Image || storage != p.StorageClass || databaseName != cfg.Database || owner != cfg.User || len(hosts) != 1 || hosts[0] != host {
+		instances, _, _ := unstructured.NestedInt64(cluster.Object, "spec", "instances")
+		size, _, _ := unstructured.NestedString(cluster.Object, "spec", "storage", "size")
+		bootstrap, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", "initdb", "secret", "name")
+		resources, _, _ := unstructured.NestedMap(cluster.Object, "spec", "resources")
+		if image != p.Image || storage != p.StorageClass || databaseName != cfg.Database || owner != cfg.User || len(hosts) != 1 || hosts[0] != host || instances != 2 || size != fmt.Sprintf("%dMi", it.StorageSize) || bootstrap != secretName || !reflect.DeepEqual(resources, database.ResourcesBlock(it.Resources)) {
 			return "", 0, false, errors.New("CNPG existing Cluster profile mismatch; explicit recovery required")
 		}
 	}
@@ -145,7 +149,7 @@ func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 			}}, "tls": map[string]any{"passthrough": true}},
 		}}, metav1.CreateOptions{})
 	}
-	if err != nil || !owned(route, labels) {
+	if err != nil || !owned(route, labels) || route.GetDeletionTimestamp() != nil {
 		return "", 0, false, errors.New("CNPG TCP route unavailable or owned by another database")
 	}
 	if p.AllocationNamespace != "" {
@@ -161,6 +165,12 @@ func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 	phase, _, _ := unstructured.NestedString(cluster.Object, "status", "phase")
 	if phase != "Cluster in healthy state" {
 		return "", 0, false, nil
+	}
+	if p.AllocationNamespace != "" {
+		instances, _, _ := unstructured.NestedInt64(cluster.Object, "status", "readyInstances")
+		if instances != 2 {
+			return "", 0, false, nil
+		}
 	}
 	ca, err := secrets.Get(ctx, name+"-ca", metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {

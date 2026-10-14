@@ -310,6 +310,15 @@ func (w *Worker) Run() {
 	}
 
 	for _, x := range *commands {
+		if x == nil {
+			continue
+		}
+		if x.CNPGCreate != nil || x.CNPGDelete != nil {
+			if x.CNPGCreate != nil && x.ValidCNPG() == nil {
+				w.cnpgCreate(ctx, x.CNPGCreate)
+			}
+			continue // malformed/mixed/delete never reaches legacy dispatch
+		}
 		forceFlush := false
 
 		switch {
@@ -397,14 +406,21 @@ func (w *Worker) secretUpsert(ctx context.Context, it *api.DeployerCommandSecret
 	slog.Info("secret: upserting", "id", it.SecretID, "revision", it.Revision)
 
 	result := &api.DeployerSetResultItemSecret{SecretID: it.SecretID, Revision: it.Revision}
-	err := w.Client.UpsertSecretKey(ctx, k8s.SecretKey{
-		ID:        resourceID(it.ProjectID, "secrets"),
-		ProjectID: idString(it.ProjectID),
-		Key:       it.Name,
-		Value:     []byte(it.Value),
-	})
+	var err error
+	if it.SecretID <= 0 || it.ProjectID <= 0 || it.Revision <= 0 || it.Name != fmt.Sprintf("secret-%d", it.SecretID) {
+		err = errors.New("secret reference invalid")
+	} else {
+		err = w.Client.UpsertSecretKey(ctx, k8s.SecretKey{
+			ID:        resourceID(it.ProjectID, "secrets"),
+			ProjectID: idString(it.ProjectID),
+			Key:       it.Name,
+			Value:     []byte(it.Value),
+			Revision:  it.Revision,
+		})
+	}
 	if err != nil {
-		slog.Error("secret: upserting error", "id", it.SecretID, "revision", it.Revision, "error", err)
+		// Kubernetes admission errors may echo Secret data; log identity only.
+		slog.Error("secret: upserting error", "id", it.SecretID, "revision", it.Revision)
 	} else {
 		result.Success = true
 		slog.Info("secret: upserted", "id", it.SecretID, "revision", it.Revision)
@@ -1439,35 +1455,6 @@ func legacyEngineFor(t api.DatabaseType, provider api.DatabaseProvider) database
 }
 
 func (w *Worker) databaseCreate(ctx context.Context, it *api.DeployerCommandDatabaseCreate) {
-	if it.Type == api.DatabaseTypePostgres && it.Provider == api.DatabaseProviderCNPG {
-		if !w.CNPG.Enabled() {
-			return
-		}
-		if it.PostgresConfig == nil || it.PostgresConfig.User == "" || it.PostgresConfig.Password == "" {
-			w.results = append(w.results, &api.DeployerSetResultItem{
-				DatabaseCreate: &api.DeployerSetResultItemDatabaseCreate{
-					ID: it.ID, ResultVersion: 2, FailureCode: "CNPG_CONFIG_REQUIRED",
-					FailureMessage: "user and password are required for CNPG",
-				},
-			})
-			return
-		}
-		host, port, ready, err := cnpg.Apply(ctx, w.Client, it, w.CNPG)
-		if err != nil {
-			slog.Error("database: CNPG create pending", "id", it.ID) // never log credentials or raw Kubernetes errors
-			return
-		}
-		if !ready {
-			return
-		}
-		w.results = append(w.results, &api.DeployerSetResultItem{
-			DatabaseCreate: &api.DeployerSetResultItemDatabaseCreate{
-				ID: it.ID, Success: true, Host: host, Port: port,
-				ResultVersion: 2, QueryReady: true, TLSReady: true,
-			},
-		})
-		return
-	}
 	eng := legacyEngineFor(it.Type, it.Provider)
 	if eng == nil {
 		slog.Error("database: unsupported type/provider", "id", it.ID, "type", it.Type, "provider", it.Provider)
@@ -1496,20 +1483,6 @@ func (w *Worker) databaseCreate(ctx context.Context, it *api.DeployerCommandData
 }
 
 func (w *Worker) databaseDelete(ctx context.Context, it *api.DeployerCommandDatabaseMetadata) {
-	if it.Type == api.DatabaseTypePostgres && it.Provider == api.DatabaseProviderCNPG {
-		if !w.CNPG.Enabled() {
-			return
-		}
-		deleted, err := cnpg.Delete(ctx, w.Client, it, w.CNPG)
-		if err != nil {
-			slog.Error("database: CNPG delete pending", "id", it.ID)
-			return
-		}
-		if deleted {
-			w.results = append(w.results, &api.DeployerSetResultItem{DatabaseDelete: &api.DeployerSetResultItemGeneral{ID: it.ID}})
-		}
-		return
-	}
 	if legacyEngineFor(it.Type, it.Provider) == nil {
 		slog.Error("database: unsupported type/provider", "id", it.ID, "type", it.Type, "provider", it.Provider)
 		return
