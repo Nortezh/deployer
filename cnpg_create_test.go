@@ -25,7 +25,7 @@ func TestCNPGCreateRechecksCurrentIntentBeforeWrites(t *testing.T) {
 	it := &api.DeployerCommandCNPGCreate{DeployerCommandCNPGIdentity: api.DeployerCommandCNPGIdentity{Version: 1, ID: 1, ProjectID: 2, OperationID: "a1111111-1111-4111-8111-111111111111"}, Name: "orders", Username: "app", StorageSize: 1024, SecretID: 3, SecretRevision: 1}
 	p := cnpg.Profile{AllocationNamespace: "allocator", PortRange: "6200-6201", PVCRetention: "delete", StorageClass: "test", Image: "registry/postgres@sha256:" + strings.Repeat("a", 64)}
 	for _, commands := range []api.GetCommandsResult{
-		{}, {{CNPGDelete: &it.DeployerCommandCNPGIdentity}}, {{CNPGCreate: it, DatabaseDelete: &api.DeployerCommandDatabaseMetadata{}}},
+		{}, {{CNPGDelete: &api.DeployerCommandCNPGDelete{DeployerCommandCNPGIdentity: it.DeployerCommandCNPGIdentity}}}, {{CNPGCreate: it, DatabaseDelete: &api.DeployerCommandDatabaseMetadata{}}},
 	} {
 		d := &rejectCNPGDeployer{commands: commands}
 		w := Worker{Deployer: d, Client: client, CNPG: p}

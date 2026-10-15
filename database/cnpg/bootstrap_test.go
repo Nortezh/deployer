@@ -30,6 +30,7 @@ type bootstrapServer struct {
 	source, target         *v1.Secret
 	calls, writes          int
 	denySource, denyTarget bool
+	retired                bool
 	race                   func(*v1.Secret) *v1.Secret
 }
 
@@ -50,6 +51,12 @@ func newBootstrapFixture(t *testing.T) (*k8s.Client, *bootstrapServer) {
 			_ = json.NewEncoder(w).Encode(metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: "Failure", Reason: metav1.StatusReason(reason), Code: int32(code), Message: bootstrapPassword})
 		}
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/app-database/configmaps/cnpg-1-2-retirement":
+			if state.retired {
+				_ = json.NewEncoder(w).Encode(v1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}})
+			} else {
+				status(404, "NotFound")
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/app/secrets/secrets-2":
 			if state.denySource {
 				status(403, "Forbidden")
@@ -169,7 +176,7 @@ func TestBootstrapRejectsSourceBeforeWrite(t *testing.T) {
 			}
 			state.mu.Lock()
 			defer state.mu.Unlock()
-			if state.writes != 0 || state.calls != 1 {
+			if state.writes != 0 || state.calls != 2 {
 				t.Fatal("invalid source reached destination/write")
 			}
 		})

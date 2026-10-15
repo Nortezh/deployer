@@ -33,7 +33,7 @@ func TestDedicatedCreateQueriesBeforeReady(t *testing.T) {
 			respond(map[string]any{"apiVersion": "v1", "kind": "NodeList", "items": []any{map[string]any{"metadata": map[string]any{"name": "lb", "labels": map[string]any{"kdb/role": "lb"}, "annotations": map[string]any{"kdb.io/host": host}}}}})
 			return
 		}
-		if strings.Contains(r.URL.Path, "/configmaps/") {
+		if r.URL.Path == "/api/v1/namespaces/allocator/configmaps/"+allocationMap {
 			if r.Method == http.MethodPut {
 				var cm map[string]any
 				if json.NewDecoder(r.Body).Decode(&cm) != nil {

@@ -45,7 +45,7 @@ func TestRunRejectsDedicatedCNPGWithoutAnyKubernetesCall(t *testing.T) {
 	identity := api.DeployerCommandCNPGIdentity{Version: 1, ID: 1, ProjectID: 2, OperationID: "a1111111-1111-4111-8111-111111111111"}
 	valid := &api.DeployerCommandCNPGCreate{DeployerCommandCNPGIdentity: identity, Name: "db", Username: "app", StorageSize: 1024, SecretID: 3, SecretRevision: 1}
 	for _, base := range []*api.DeployerCommandItem{
-		{CNPGCreate: valid}, {CNPGDelete: &identity}, {CNPGCreate: &api.DeployerCommandCNPGCreate{}}, {CNPGDelete: &api.DeployerCommandCNPGIdentity{}},
+		{CNPGCreate: valid}, {CNPGDelete: &api.DeployerCommandCNPGDelete{DeployerCommandCNPGIdentity: identity}}, {CNPGCreate: &api.DeployerCommandCNPGCreate{}}, {CNPGDelete: &api.DeployerCommandCNPGDelete{}},
 	} {
 		for i := -1; i < reflect.TypeOf(*base).NumField(); i++ {
 			command := *base
@@ -147,7 +147,7 @@ func TestRunContinuesLegacyOnlyBatchAfterCNPGRejection(t *testing.T) {
 	d := &rejectCNPGDeployer{commands: api.GetCommandsResult{
 		{DatabaseCreate: &api.DeployerCommandDatabaseCreate{ID: 1, ProjectID: 2, Name: "db", Type: api.DatabaseTypePostgres, Provider: api.DatabaseProviderCNPG, StorageSize: 1024, PostgresConfig: &api.DatabaseConfigPostgres{User: "app", Password: "fixture-only"}}},
 		{DatabaseDelete: &api.DeployerCommandDatabaseMetadata{ID: 1, ProjectID: 2, Name: "db", Type: api.DatabaseTypePostgres, Provider: api.DatabaseProviderCNPG}},
-		{CNPGDelete: &api.DeployerCommandCNPGIdentity{}},
+		{CNPGDelete: &api.DeployerCommandCNPGDelete{}},
 		{SecretDelete: &api.DeployerCommandSecretDelete{SecretID: 3, ProjectID: 2, Name: "TOKEN", Revision: 1}},
 	}}
 	worker := Worker{Deployer: d, Client: client, location: &api.LocationItem{}, CNPG: cnpg.Profile{

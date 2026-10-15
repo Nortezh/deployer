@@ -316,8 +316,10 @@ func (w *Worker) Run() {
 		if x.CNPGCreate != nil || x.CNPGDelete != nil {
 			if x.CNPGCreate != nil && x.ValidCNPG() == nil {
 				w.cnpgCreate(ctx, x.CNPGCreate)
+			} else if x.CNPGDelete != nil && x.ValidCNPG() == nil {
+				w.cnpgDelete(ctx, x.CNPGDelete)
 			}
-			continue // malformed/mixed/delete never reaches legacy dispatch
+			continue // malformed/mixed/old identity-only delete never reaches legacy dispatch
 		}
 		forceFlush := false
 

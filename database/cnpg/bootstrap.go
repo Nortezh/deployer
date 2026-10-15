@@ -26,6 +26,11 @@ func EnsureBootstrapSecret(ctx context.Context, c *k8s.Client, it *api.DeployerC
 	if len(validation.IsDNS1123Subdomain(name)) != 0 || len(validation.IsDNS1123Label(it.Name)) != 0 {
 		return "", errBootstrapUnavailable
 	}
+	// A standard retirement record prevents reuse of this immutable database identity.
+	_, retirementErr := c.Core().CoreV1().ConfigMaps(c.DBNamespace()).Get(ctx, retirementName(createName(it)), metav1.GetOptions{})
+	if !apierrors.IsNotFound(retirementErr) {
+		return "", errBootstrapUnavailable
+	}
 	password, err := c.ReadSyncedSecretKey(ctx, it.ProjectID, it.SecretID, it.SecretRevision)
 	if err != nil {
 		return "", errBootstrapUnavailable
