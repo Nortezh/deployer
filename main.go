@@ -313,8 +313,12 @@ func (w *Worker) Run() {
 		if x == nil {
 			continue
 		}
-		if x.CNPGCreate != nil || x.CNPGDelete != nil {
-			if x.CNPGCreate != nil && x.ValidCNPG() == nil {
+		if x.CNPGCreate != nil || x.CNPGDelete != nil || x.CNPGBackup != nil || x.CNPGRestore != nil {
+			if x.CNPGRestore != nil && x.ValidCNPG() == nil {
+				w.cnpgRestore(ctx, x.CNPGRestore)
+			} else if x.CNPGBackup != nil && x.ValidCNPG() == nil {
+				w.cnpgBackup(ctx, x.CNPGBackup)
+			} else if x.CNPGCreate != nil && x.ValidCNPG() == nil {
 				w.cnpgCreate(ctx, x.CNPGCreate)
 			} else if x.CNPGDelete != nil && x.ValidCNPG() == nil {
 				w.cnpgDelete(ctx, x.CNPGDelete)

@@ -16,10 +16,17 @@ before reviewing endpoint, TLS, RBAC, backend compatibility and cleanup on targe
 Dedicated create code now accepts only a valid sole CNPG create in the operational
 profile, rechecks the authenticated Backend's current command and synced Secret
 revision, and reuses stock reconciliation with immutable database-ID names. Ready
-requires two ready instances and an authenticated `verify-full` query. Legacy CNPG,
-mixed commands and dedicated deletion remain rejected. The Backend's exact-location
+requires two ready instances and an authenticated `verify-full` query. Legacy CNPG
+and mixed commands remain rejected. The Backend's exact-location
 `database_cnpg_create` integration gate is not installed/enabled by this change;
 customer availability and real Operator/SQL acceptance remain gated.
+
+Restored targets use `bootstrap.recovery`. Guarded deletion supports both initdb
+and recovery targets and retains the same ownership, PVC/PV and port-release checks;
+plugin-enabled backup sources still remain blocked. Cleanup does not delete the
+external recovery source or its ObjectStore. New backups on restored targets are
+unavailable until target WAL archiving and backup lifecycle are supported; the
+Backend rejects admission and reports `backupAvailable=false` for these targets.
 
 The isolated local spike remains behind `LOCAL=true` and
 `CNPG_DISPOSABLE_SPIKE=true` with its separate explicit profile.

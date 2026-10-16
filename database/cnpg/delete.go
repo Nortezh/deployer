@@ -163,9 +163,14 @@ func captureDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCN
 		return nil, errDeleteBlocked
 	}
 	sc, _, _ := unstructured.NestedString(cluster.Object, "spec", "storage", "storageClass")
-	bootstrap, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", "initdb", "secret", "name")
+	bootstrapConfig, _, bootstrapErr := unstructured.NestedMap(cluster.Object, "spec", "bootstrap")
+	bootstrap := str(cluster, "spec", "bootstrap", "initdb", "secret", "name")
+	if _, recovery := bootstrapConfig["recovery"]; recovery {
+		// Recovery reads externalClusters; cleanup still inventories only target-owned resources.
+		bootstrap = str(cluster, "spec", "bootstrap", "recovery", "secret", "name")
+	}
 	instances, _, _ := unstructured.NestedInt64(cluster.Object, "spec", "instances")
-	if sc != p.StorageClass || bootstrap != name+"-app" || instances != 2 {
+	if bootstrapErr != nil || len(bootstrapConfig) != 1 || sc != p.StorageClass || bootstrap != name+"-app" || instances != 2 {
 		return nil, errDeleteBlocked
 	}
 	backup, backupSet, backupErr := unstructured.NestedMap(cluster.Object, "spec", "backup")

@@ -164,8 +164,30 @@ func newDeleteFixture(t *testing.T) (*k8s.Client, *deleteFixture) {
 }
 
 func TestStandardDeleteWaitsForOwnedResourcesAndSecret(t *testing.T) {
+	for _, mode := range []string{"initdb", "recovery"} {
+		t.Run(mode, func(t *testing.T) { testStandardDeleteLifecycle(t, mode) })
+	}
+}
+
+func testStandardDeleteLifecycle(t *testing.T, mode string) {
+	t.Helper()
 	c, f := newDeleteFixture(t)
+	if mode == "recovery" {
+		spec := f.objects["/apis/postgresql.cnpg.io/v1/namespaces/app-database/clusters/cnpg-1-2"]["spec"].(map[string]any)
+		spec["bootstrap"] = map[string]any{"recovery": map[string]any{"source": "selected-backup", "secret": map[string]any{"name": "cnpg-1-2-app"}, "recoveryTarget": map[string]any{"backupID": "20261015T120000", "targetImmediate": true}}}
+		spec["externalClusters"] = []any{map[string]any{"name": "selected-backup", "plugin": map[string]any{"name": barmanPlugin, "parameters": map[string]any{"barmanObjectName": "source-store", "serverName": "source"}}}}
+	}
 	it := deleteCommand()
+	// These source resources are outside the target's ownership and must survive cleanup.
+	sourcePaths := map[string]string{
+		"/apis/postgresql.cnpg.io/v1/namespaces/app-database/clusters/source":            "Cluster",
+		"/apis/postgresql.cnpg.io/v1/namespaces/app-database/backups/source-backup":      "Backup",
+		"/apis/barmancloud.cnpg.io/v1/namespaces/app-database/objectstores/source-store": "ObjectStore",
+		"/api/v1/namespaces/app-database/secrets/source-app":                             "Secret",
+	}
+	for path, kind := range sourcePaths {
+		f.objects[path] = map[string]any{"apiVersion": "v1", "kind": kind, "metadata": map[string]any{"name": path[strings.LastIndex(path, "/")+1:], "uid": "source-uid", "resourceVersion": "1"}}
+	}
 	ctx := context.Background()
 	p := deleteProfile()
 	// Full lifecycle also works with create disabled and a degraded HA2 database.
@@ -237,6 +259,13 @@ func TestStandardDeleteWaitsForOwnedResourcesAndSecret(t *testing.T) {
 	f.mu.Unlock()
 	if done, err := ApplyDelete(ctx, c, &final, p); !done || err != nil {
 		t.Fatal("completed retry must preserve new port owner", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for path := range sourcePaths {
+		if f.objects[path] == nil {
+			t.Fatal("source recovery resource was deleted", path)
+		}
 	}
 }
 
@@ -324,7 +353,7 @@ func TestStandardDeleteIgnoresCreateSettingsAndDatabaseHealth(t *testing.T) {
 }
 
 func TestStandardDeleteBlocksUncertainInventoryBeforeWrites(t *testing.T) {
-	for _, kind := range []string{"foreign-bootstrap", "foreign-cluster", "retain", "claim-uid", "node-notready", "node-boot-empty", "backup", "missing-root", "foreign-route", "unsupported-storage", "rbac", "expired-lease", "wrong-instance-config", "missing-instance-config", "missing-pvc", "unbound-pvc", "missing-allocation-namespace", "retain-profile", "bad-allocation-key", "foreign-reservation", "duplicate-reservation", "wrong-entrypoint", "missing-volume-source", "empty-local-path", "unsupported-volume-source"} {
+	for _, kind := range []string{"foreign-bootstrap", "wrong-recovery-secret", "mixed-bootstrap", "recovery-archiver", "foreign-cluster", "retain", "claim-uid", "node-notready", "node-boot-empty", "backup", "missing-root", "foreign-route", "unsupported-storage", "rbac", "expired-lease", "wrong-instance-config", "missing-instance-config", "missing-pvc", "unbound-pvc", "missing-allocation-namespace", "retain-profile", "bad-allocation-key", "foreign-reservation", "duplicate-reservation", "wrong-entrypoint", "missing-volume-source", "empty-local-path", "unsupported-volume-source"} {
 		t.Run(kind, func(t *testing.T) {
 			c, f := newDeleteFixture(t)
 			p := deleteProfile()
@@ -337,6 +366,19 @@ func TestStandardDeleteBlocksUncertainInventoryBeforeWrites(t *testing.T) {
 					spec["local"] = map[string]any{"path": ""}
 				} else if kind == "unsupported-volume-source" {
 					spec["nfs"] = map[string]any{"server": "foreign", "path": "/foreign"}
+				}
+			case "wrong-recovery-secret", "mixed-bootstrap", "recovery-archiver":
+				spec := f.objects["/apis/postgresql.cnpg.io/v1/namespaces/app-database/clusters/cnpg-1-2"]["spec"].(map[string]any)
+				bootstrap := spec["bootstrap"].(map[string]any)
+				bootstrap["recovery"] = map[string]any{"secret": map[string]any{"name": "cnpg-1-2-app"}}
+				if kind != "mixed-bootstrap" {
+					delete(bootstrap, "initdb")
+				}
+				if kind == "wrong-recovery-secret" {
+					bootstrap["recovery"] = map[string]any{"secret": map[string]any{"name": "foreign-app"}}
+				}
+				if kind == "recovery-archiver" {
+					spec["plugins"] = []any{map[string]any{"name": barmanPlugin, "isWALArchiver": true}}
 				}
 			case "foreign-bootstrap":
 				f.objects["/api/v1/namespaces/app-database/secrets/cnpg-1-2-app"]["metadata"].(map[string]any)["labels"].(map[string]any)["nortezh.io/project-id"] = "foreign"

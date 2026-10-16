@@ -65,6 +65,10 @@ func effectiveConfig(cfg *api.DatabaseConfigPostgres) api.DatabaseConfigPostgres
 }
 
 func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCreate, p Profile) (string, int, bool, error) {
+	return apply(ctx, c, it, p, nil)
+}
+
+func apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCreate, p Profile, recovery *api.DeployerCommandCNPGRestore) (string, int, bool, error) {
 	if !p.Enabled() || it.PostgresConfig == nil || it.PostgresConfig.User == "" || it.PostgresConfig.Password == "" || it.StorageSize <= 0 {
 		return "", 0, false, errors.New("CNPG profile or database configuration missing")
 	}
@@ -98,14 +102,26 @@ func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 		return "", 0, false, errors.New("CNPG credential Secret mismatch")
 	}
 
+	mode := "initdb"
+	bootstrapConfig := map[string]any{"database": cfg.Database, "owner": cfg.User, "secret": map[string]any{"name": secretName}}
+	var externalClusters []any
+	if recovery != nil {
+		mode = "recovery"
+		bootstrapConfig["source"] = "selected-backup"
+		bootstrapConfig["recoveryTarget"] = map[string]any{"backupID": recovery.Material.BarmanBackupID, "targetImmediate": true}
+		externalClusters = []any{map[string]any{"name": "selected-backup", "plugin": map[string]any{"name": barmanPlugin, "enabled": true, "isWALArchiver": false, "parameters": map[string]any{"barmanObjectName": recovery.Material.ObjectStoreName, "serverName": recovery.Material.ServerName}}}}
+	}
 	clusters := c.Dynamic().Resource(clusterGVR).Namespace(c.DBNamespace())
 	cluster, err := clusters.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		spec := map[string]any{
 			"instances": int64(2), "imageName": p.Image,
 			"storage":      map[string]any{"storageClass": p.StorageClass, "size": fmt.Sprintf("%dMi", it.StorageSize), "pvcTemplate": map[string]any{"accessModes": []any{"ReadWriteOnce"}}},
-			"bootstrap":    map[string]any{"initdb": map[string]any{"database": cfg.Database, "owner": cfg.User, "secret": map[string]any{"name": secretName}}},
+			"bootstrap":    map[string]any{mode: bootstrapConfig},
 			"certificates": map[string]any{"serverAltDNSNames": []any{host}},
+		}
+		if recovery != nil {
+			spec["externalClusters"] = externalClusters
 		}
 		if resources := database.ResourcesBlock(it.Resources); resources != nil {
 			spec["resources"] = resources
@@ -122,15 +138,22 @@ func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 	if p.AllocationNamespace != "" {
 		image, _, _ := unstructured.NestedString(cluster.Object, "spec", "imageName")
 		storage, _, _ := unstructured.NestedString(cluster.Object, "spec", "storage", "storageClass")
-		databaseName, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", "initdb", "database")
-		owner, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", "initdb", "owner")
+		databaseName, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", mode, "database")
+		owner, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", mode, "owner")
 		hosts, _, _ := unstructured.NestedStringSlice(cluster.Object, "spec", "certificates", "serverAltDNSNames")
 		instances, _, _ := unstructured.NestedInt64(cluster.Object, "spec", "instances")
 		size, _, _ := unstructured.NestedString(cluster.Object, "spec", "storage", "size")
-		bootstrap, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", "initdb", "secret", "name")
+		bootstrap, _, _ := unstructured.NestedString(cluster.Object, "spec", "bootstrap", mode, "secret", "name")
 		resources, _, _ := unstructured.NestedMap(cluster.Object, "spec", "resources")
 		if image != p.Image || storage != p.StorageClass || databaseName != cfg.Database || owner != cfg.User || len(hosts) != 1 || hosts[0] != host || instances != 2 || size != fmt.Sprintf("%dMi", it.StorageSize) || bootstrap != secretName || !reflect.DeepEqual(resources, database.ResourcesBlock(it.Resources)) {
 			return "", 0, false, errors.New("CNPG existing Cluster profile mismatch; explicit recovery required")
+		}
+		if recovery != nil {
+			actual, _, _ := unstructured.NestedMap(cluster.Object, "spec", "bootstrap", "recovery")
+			external, _, _ := unstructured.NestedSlice(cluster.Object, "spec", "externalClusters")
+			if !reflect.DeepEqual(actual, bootstrapConfig) || !reflect.DeepEqual(external, externalClusters) {
+				return "", 0, false, errors.New("CNPG selected recovery configuration mismatch")
+			}
 		}
 	}
 
