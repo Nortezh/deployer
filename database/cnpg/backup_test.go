@@ -170,13 +170,13 @@ func TestBackupUnknownAndNativeFailure(t *testing.T) {
 			f.mu.Unlock()
 			r, err := ApplyBackup(context.Background(), c, &it, p)
 			switch mode {
-			case "missing-material", "failed-no-stop":
+			case "missing-material":
 				if err != nil || r == nil || r.Status != api.CNPGBackupRunning {
 					t.Fatal("uncertainty unlocked operation", err)
 				}
-			case "failed":
-				if err != nil || r == nil || r.Status != api.CNPGBackupFailed || r.FailureCode != api.CNPGFailureBackup {
-					t.Fatal("native terminal failure missing", err)
+			case "failed-no-stop", "failed":
+				if err != nil || r == nil || r.Status != api.CNPGBackupFailed || r.FailureCode != api.CNPGFailureBackup || r.BackupUID != it.BackupUID || r.SourceClusterUID != it.SourceClusterUID {
+					t.Fatal("checkpointed native terminal failure missing", err)
 				}
 			default:
 				if err == nil || r != nil {

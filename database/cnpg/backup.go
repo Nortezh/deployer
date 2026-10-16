@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strconv"
-	"time"
 
 	"github.com/Nortezh/api"
 	"github.com/deploys-app/deployer/k8s"
@@ -121,9 +120,8 @@ func ApplyBackup(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPG
 			result.Status, result.Material = api.CNPGBackupCompleted, material
 		}
 	case "failed":
-		if stopped, err := time.Parse(time.RFC3339, str(backup, "status", "stoppedAt")); err == nil && !stopped.IsZero() {
-			result.Status, result.FailureCode = api.CNPGBackupFailed, api.CNPGFailureBackup
-		}
+		// CNPG may omit stoppedAt on a terminal failure.
+		result.Status, result.FailureCode = api.CNPGBackupFailed, api.CNPGFailureBackup
 	}
 	if result.Valid() != nil {
 		return nil, errBackupUnavailable
