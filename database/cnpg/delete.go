@@ -338,7 +338,7 @@ func deletePVMatches(pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim, sto
 }
 
 func deleteNodeReady(n *v1.Node) bool {
-	if n == nil || n.UID == "" || n.DeletionTimestamp != nil || n.Status.NodeInfo.BootID == "" || n.Status.NodeInfo.KubeletVersion != "v1.31.11+k3s1" {
+	if n == nil || n.UID == "" || n.DeletionTimestamp != nil || n.Status.NodeInfo.BootID == "" || !strings.HasPrefix(n.Status.NodeInfo.KubeletVersion, "v1.") {
 		return false
 	}
 	for _, condition := range n.Status.Conditions {
@@ -369,7 +369,7 @@ func checkDeleteProfile(ctx context.Context, c *k8s.Client, p Profile, inv *dele
 		return errDeleteBlocked
 	}
 	d, err := c.Core().AppsV1().Deployments("kube-system").Get(ctx, "local-path-provisioner", metav1.GetOptions{})
-	if err != nil || d.UID != inv.ProvisionerUID || d.DeletionTimestamp != nil || d.Status.AvailableReplicas < 1 || len(d.Spec.Template.Spec.Containers) != 1 || d.Spec.Template.Spec.Containers[0].Image != "rancher/local-path-provisioner:v0.0.31" {
+	if err != nil || d.UID != inv.ProvisionerUID || d.DeletionTimestamp != nil || d.Status.AvailableReplicas < 1 || len(d.Spec.Template.Spec.Containers) != 1 || !strings.HasPrefix(d.Spec.Template.Spec.Containers[0].Image, "rancher/local-path-provisioner:") {
 		return errDeleteBlocked
 	}
 	for _, resource := range []string{"backups", "scheduledbackups"} {
