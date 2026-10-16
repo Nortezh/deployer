@@ -187,6 +187,15 @@ func apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 
 	phase, _, _ := unstructured.NestedString(cluster.Object, "status", "phase")
 	if phase != "Cluster in healthy state" {
+		if recovery != nil {
+			ready, _, _ := unstructured.NestedInt64(cluster.Object, "status", "readyInstances")
+			primary, _, _ := unstructured.NestedString(cluster.Object, "status", "currentPrimary")
+			if ready == 0 && primary == "" {
+				if err := restoreFailure(ctx, c, cluster); err != nil {
+					return "", 0, false, err
+				}
+			}
+		}
 		return "", 0, false, nil
 	}
 	if p.AllocationNamespace != "" {

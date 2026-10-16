@@ -26,6 +26,8 @@ github.com/Nortezh/api v1.5.0-dev.managed-postgres.5 h1:nj0OuZr4fFS5AKRy3AdOUfMY
 github.com/Nortezh/api v1.5.0-dev.managed-postgres.5/go.mod h1:Z7G8gUbLoW/yxkDJ9YAdLtCh0FcXPvDc/v72pfxJ2sg=
 github.com/Nortezh/api v1.5.0-dev.managed-postgres.6 h1:xQ7DPzCDNRIbq+zJ98pcea79fMKDOfuUNls+oqZfHOg=
 github.com/Nortezh/api v1.5.0-dev.managed-postgres.6/go.mod h1:Z7G8gUbLoW/yxkDJ9YAdLtCh0FcXPvDc/v72pfxJ2sg=
+github.com/Nortezh/api v1.5.0-dev.managed-postgres.7 h1:QsUtjHdvjRieSBGI7xV/SFlgupWZfYQsGZEqrkp45F8=
+github.com/Nortezh/api v1.5.0-dev.managed-postgres.7/go.mod h1:Z7G8gUbLoW/yxkDJ9YAdLtCh0FcXPvDc/v72pfxJ2sg=
 github.com/acoshift/arpc/v2 v2.2.0 h1:OKcFyMtoZULVfs4Gfa5AQOVItaTNIgTIuOb2YzKz9AA=
 github.com/acoshift/arpc/v2 v2.2.0/go.mod h1:EZ7M0MpTTDhD8+9k+PbvGGFAoHDhs12442A6VpNDS7A=
 github.com/acoshift/configfile v1.9.0 h1:/t8DhgBdYIr15f4BkkM4bDSBWi0+ImKwWgJN/M5Hbb0=

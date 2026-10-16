@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"reflect"
 
 	"github.com/Nortezh/api"
@@ -27,10 +28,19 @@ func (w *Worker) cnpgRestore(ctx context.Context, it *api.DeployerCommandCNPGRes
 		return
 	}
 	host, port, ready, err := cnpg.ApplyRestore(ctx, w.Client, it, w.CNPG)
-	if err != nil {
-		return
-	} // no failure/cleanup claim for an uncertain physical recovery
 	result := &api.DeployerSetResultCNPGRestore{DeployerCommandCNPGRestore: *it, Status: api.CNPGBackupRunning}
+	if err != nil {
+		var failed *cnpg.RestoreFailure
+		if !errors.As(err, &failed) {
+			return // uncertain recovery remains active
+		}
+		result.Status, result.FailureCode = api.CNPGBackupFailed, api.CNPGFailureRestore
+		result.TargetClusterUID, result.RecoveryJobUID = failed.TargetClusterUID, failed.RecoveryJobUID
+		if result.Valid() == nil {
+			w.results = append(w.results, &api.DeployerSetResultItem{CNPGRestore: result})
+		}
+		return
+	}
 	if ready {
 		result.Status = api.CNPGBackupCompleted
 		result.Host, result.Port = host, port

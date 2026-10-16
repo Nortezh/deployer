@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -70,6 +71,58 @@ func TestRunRejectsDedicatedCNPGWithoutAnyKubernetesCall(t *testing.T) {
 			if calls.Load() != 0 || d.resultCalls != 0 || len(worker.results) != 0 {
 				t.Fatalf("dedicated/mixed command executed: %s, calls=%d results=%d", data, calls.Load(), d.resultCalls)
 			}
+		}
+	}
+}
+
+func TestCNPGRestoreRechecksExactIntentAndRetainsUnknownOutcome(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, "fixture denial", http.StatusForbidden)
+	}))
+	defer server.Close()
+	t.Setenv("KUBE_PROXY_URL", server.URL)
+	client, err := k8s.NewLocalClient("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := "registry/postgres:17@sha256:" + strings.Repeat("a", 64)
+	backup := api.DeployerCommandCNPGBackup{
+		DeployerCommandCNPGIdentity: api.DeployerCommandCNPGIdentity{Version: 1, ID: 1, ProjectID: 2, OperationID: "b1111111-1111-4111-8111-111111111111"},
+		CreateOperationID:           "a1111111-1111-4111-8111-111111111111", SourceClusterUID: "c1111111-1111-4111-8111-111111111111", BackupUID: "d1111111-1111-4111-8111-111111111111",
+	}
+	it := &api.DeployerCommandCNPGRestore{
+		DeployerCommandCNPGCreate: api.DeployerCommandCNPGCreate{
+			DeployerCommandCNPGIdentity: api.DeployerCommandCNPGIdentity{Version: 1, ID: 3, ProjectID: 2, OperationID: "f1111111-1111-4111-8111-111111111111"},
+			Name:                        "restored", Username: "app", Database: "app", StorageSize: 1024, SecretID: 4, SecretRevision: 1,
+		},
+		RestoreOperationID: "91111111-1111-4111-8111-111111111111", Backup: backup,
+		Material: api.CNPGBackupMaterial{BarmanBackupID: "20261015T120000", MajorVersion: 17, Image: image, StorageClass: "hostpath", ObjectStoreName: "backup-store", ObjectStoreUID: "e1111111-1111-4111-8111-111111111111", ServerName: "cnpg-source", EndWAL: "000000010000000000000004", EndLSN: "0/4000028"},
+	}
+	if it.Valid() != nil {
+		t.Fatal("restore fixture invalid", it.Valid())
+	}
+	changed := *it
+	changed.OperationID = "81111111-1111-4111-8111-111111111111"
+	for _, mode := range []string{"absent", "changed", "mixed", "current"} {
+		d := &rejectCNPGDeployer{}
+		switch mode {
+		case "changed":
+			d.commands = api.GetCommandsResult{{CNPGRestore: &changed}}
+		case "mixed":
+			d.commands = api.GetCommandsResult{{CNPGRestore: it, SecretDelete: &api.DeployerCommandSecretDelete{SecretID: 5, ProjectID: 2, Revision: 1}}}
+		case "current":
+			d.commands = api.GetCommandsResult{{CNPGRestore: it}}
+		}
+		worker := Worker{Deployer: d, Client: client, CNPG: cnpg.Profile{AllocationNamespace: "allocator", PortRange: "6100-6199", PVCRetention: "delete", StorageClass: "hostpath", Image: image}}
+		before := calls.Load()
+		worker.cnpgRestore(context.Background(), it)
+		if (calls.Load() > before) != (mode == "current") {
+			t.Fatal("stale/mixed restore reached Kubernetes", mode)
+		}
+		if len(worker.results) != 0 {
+			t.Fatal("unknown restore outcome reported success")
 		}
 	}
 }

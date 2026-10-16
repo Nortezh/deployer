@@ -25,6 +25,9 @@ type backupFixture struct {
 	creates                int
 	lostResponse           bool
 	forbidden              bool
+	storeNotFound          bool
+	backupLookupBarrier    chan struct{}
+	backupLookups          int
 }
 
 func newBackupFixture(t *testing.T) (*backupFixture, *k8s.Client, Profile) {
@@ -38,6 +41,24 @@ func newBackupFixture(t *testing.T) (*backupFixture, *k8s.Client, Profile) {
 		store: map[string]any{"apiVersion": "barmancloud.cnpg.io/v1", "kind": "ObjectStore", "metadata": map[string]any{"name": "backup-store", "uid": "e1111111-1111-4111-8111-111111111111"}, "spec": map[string]any{}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/backups/") && r.Method == http.MethodGet && f.backupLookupBarrier != nil {
+			f.mu.Lock()
+			waitForConcurrentMiss := f.backupLookups < 2
+			if waitForConcurrentMiss {
+				f.backupLookups++
+				barrier := f.backupLookupBarrier
+				if f.backupLookups == 2 {
+					close(barrier)
+				}
+				f.mu.Unlock()
+				<-barrier
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]any{"apiVersion": "v1", "kind": "Status", "reason": "NotFound", "code": 404})
+				return
+			}
+			f.mu.Unlock()
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
@@ -57,6 +78,11 @@ func newBackupFixture(t *testing.T) (*backupFixture, *k8s.Client, Profile) {
 		case strings.HasSuffix(r.URL.Path, "/secrets/cnpg-1-2-app"):
 			reply(map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "cnpg-1-2-app", "namespace": "app-database", "labels": map[string]any{"nortezh.io/database-id": "1", "nortezh.io/project-id": "2", "nortezh.io/operation-id": backupCommand().CreateOperationID}}, "immutable": true, "type": "kubernetes.io/basic-auth"})
 		case strings.HasSuffix(r.URL.Path, "/objectstores/backup-store"):
+			if f.storeNotFound {
+				w.WriteHeader(http.StatusNotFound)
+				reply(map[string]any{"apiVersion": "v1", "kind": "Status", "reason": "NotFound", "code": 404})
+				return
+			}
 			reply(f.store)
 		case strings.HasSuffix(r.URL.Path, "/backups") && r.Method == http.MethodPost:
 			if f.backup != nil {
@@ -123,6 +149,38 @@ func TestBackupCreateRetryAndCompletion(t *testing.T) {
 	}
 }
 
+func TestBackupConcurrentCreateRacesJoinExistingBackup(t *testing.T) {
+	f, c, p := newBackupFixture(t)
+	f.backupLookupBarrier = make(chan struct{})
+	it := backupCommand()
+	type outcome struct {
+		result *api.DeployerSetResultCNPGBackup
+		err    error
+	}
+	outcomes := make(chan outcome, 2)
+	for range 2 {
+		go func() {
+			result, err := ApplyBackup(context.Background(), c, it, p)
+			outcomes <- outcome{result, err}
+		}()
+	}
+	var first *api.DeployerSetResultCNPGBackup
+	for range 2 {
+		got := <-outcomes
+		if got.err != nil || got.result == nil || got.result.Status != api.CNPGBackupRunning {
+			t.Fatal("concurrent create did not reconcile", got.err)
+		}
+		if first == nil {
+			first = got.result
+		} else if got.result.BackupUID != first.BackupUID || got.result.SourceClusterUID != first.SourceClusterUID {
+			t.Fatal("concurrent create returned different native identity")
+		}
+	}
+	if f.creates != 1 {
+		t.Fatal("concurrent retry created duplicate Backup", f.creates)
+	}
+}
+
 func TestBackupLostCreateResponseDoesNotDuplicate(t *testing.T) {
 	f, c, p := newBackupFixture(t)
 	f.lostResponse = true
@@ -178,6 +236,10 @@ func TestBackupUnknownAndNativeFailure(t *testing.T) {
 				if err != nil || r == nil || r.Status != api.CNPGBackupFailed || r.FailureCode != api.CNPGFailureBackup || r.BackupUID != it.BackupUID || r.SourceClusterUID != it.SourceClusterUID {
 					t.Fatal("checkpointed native terminal failure missing", err)
 				}
+				retry, err := ApplyBackup(context.Background(), c, &it, p)
+				if err != nil || retry == nil || retry.Status != r.Status || retry.BackupUID != r.BackupUID || f.creates != 1 {
+					t.Fatal("failed retry changed native backup identity", err)
+				}
 			default:
 				if err == nil || r != nil {
 					t.Fatal("unknown/mismatch produced a receipt")
@@ -191,13 +253,15 @@ func TestBackupUnknownAndNativeFailure(t *testing.T) {
 }
 
 func TestBackupRequiresConfiguredArchiverAndNoRetention(t *testing.T) {
-	for _, mode := range []string{"no-plugin", "rotation", "image", "source-root"} {
+	for _, mode := range []string{"no-plugin", "missing-objectstore", "rotation", "image", "source-root"} {
 		t.Run(mode, func(t *testing.T) {
 			f, c, p := newBackupFixture(t)
 			it := backupCommand()
 			switch mode {
 			case "no-plugin":
 				delete(f.cluster["spec"].(map[string]any), "plugins")
+			case "missing-objectstore":
+				f.storeNotFound = true
 			case "rotation":
 				f.store["spec"].(map[string]any)["retentionPolicy"] = "30d"
 			case "image":
