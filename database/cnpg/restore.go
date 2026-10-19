@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nortezh/api"
 	"github.com/deploys-app/deployer/k8s"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -24,7 +25,13 @@ func ApplyRestore(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNP
 	}
 	sourceName := createName(&api.DeployerCommandCNPGCreate{DeployerCommandCNPGIdentity: it.Backup.DeployerCommandCNPGIdentity})
 	source, err := c.Core().CoreV1().Secrets(c.DBNamespace()).Get(ctx, sourceName+"-app", metav1.GetOptions{})
-	if err != nil || string(source.Data["username"]) != it.Username {
+	// Revalidate this read too: the source may change after ApplyBackup's check.
+	if err != nil || source == nil || source.Name != sourceName+"-app" || source.Namespace != c.DBNamespace() || source.UID == "" ||
+		source.DeletionTimestamp != nil || len(source.OwnerReferences) != 0 || source.Immutable == nil || !*source.Immutable || source.Type != v1.SecretTypeBasicAuth ||
+		source.Labels["nortezh.io/database-id"] != strconv.FormatInt(it.Backup.ID, 10) ||
+		source.Labels["nortezh.io/project-id"] != strconv.FormatInt(it.Backup.ProjectID, 10) ||
+		source.Labels["nortezh.io/operation-id"] != it.Backup.CreateOperationID ||
+		len(source.Data) != 2 || len(source.StringData) != 0 || len(source.Data[v1.BasicAuthPasswordKey]) == 0 || string(source.Data[v1.BasicAuthUsernameKey]) != it.Username {
 		return "", 0, false, errBootstrapUnavailable
 	}
 	password, err := c.ReadSyncedSecretKey(ctx, it.ProjectID, it.SecretID, it.SecretRevision)

@@ -105,17 +105,23 @@ func TestCNPGRestoreRechecksExactIntentAndRetainsUnknownOutcome(t *testing.T) {
 	}
 	changed := *it
 	changed.OperationID = "81111111-1111-4111-8111-111111111111"
-	for _, mode := range []string{"absent", "changed", "mixed", "current"} {
+	for _, mode := range []string{"absent", "changed", "mixed", "current", "spike"} {
 		d := &rejectCNPGDeployer{}
 		switch mode {
 		case "changed":
 			d.commands = api.GetCommandsResult{{CNPGRestore: &changed}}
 		case "mixed":
 			d.commands = api.GetCommandsResult{{CNPGRestore: it, SecretDelete: &api.DeployerCommandSecretDelete{SecretID: 5, ProjectID: 2, Revision: 1}}}
-		case "current":
+		case "current", "spike":
 			d.commands = api.GetCommandsResult{{CNPGRestore: it}}
 		}
 		worker := Worker{Deployer: d, Client: client, CNPG: cnpg.Profile{AllocationNamespace: "allocator", PortRange: "6100-6199", PVCRetention: "delete", StorageClass: "hostpath", Image: image}}
+		if mode == "spike" {
+			worker.CNPG = cnpg.Profile{HostSuffix: ".localhost", Port: "6109", EntryPoint: "tcp-6109", NodeName: "local", StorageClass: "local-path", Image: "pinned"}
+			if !worker.CNPG.Enabled() {
+				t.Fatal("spike fixture must be enabled")
+			}
+		}
 		before := calls.Load()
 		worker.cnpgRestore(context.Background(), it)
 		if (calls.Load() > before) != (mode == "current") {

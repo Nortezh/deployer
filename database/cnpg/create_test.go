@@ -19,6 +19,7 @@ func TestDedicatedCreateQueriesBeforeReady(t *testing.T) {
 	host, port, ca, queries := testPostgresTLS(t, bootstrapPassword)
 	objects := map[string]map[string]any{}
 	allocations := map[string]any{}
+	rejectCluster := true
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -59,6 +60,11 @@ func TestDedicatedCreateQueriesBeforeReady(t *testing.T) {
 				t.Error("bad resource")
 				return
 			}
+			if obj["kind"] == "Cluster" && rejectCluster {
+				w.WriteHeader(http.StatusForbidden)
+				respond(map[string]any{"apiVersion": "v1", "kind": "Status", "reason": "Forbidden", "code": 403})
+				return
+			}
 			if obj["kind"] == "Cluster" {
 				obj["status"] = map[string]any{"phase": "Cluster in healthy state", "readyInstances": 2}
 			}
@@ -83,6 +89,16 @@ func TestDedicatedCreateQueriesBeforeReady(t *testing.T) {
 	}
 	p := Profile{AllocationNamespace: "allocator", PortRange: port + "-" + port, PVCRetention: "delete", StorageClass: "test", Image: "registry/postgres@sha256:" + strings.Repeat("a", 64)}
 	command := bootstrapCommand()
+	if _, _, ready, err := ApplyCreate(context.Background(), client, command, p); err == nil || ready {
+		t.Fatal("denied Cluster creation accepted")
+	}
+	mu.Lock()
+	if len(allocations) != 1 || objects["/apis/postgresql.cnpg.io/v1/namespaces/app-database/clusters/cnpg-1-2"] != nil {
+		mu.Unlock()
+		t.Fatal("partial-create reservation not retained")
+	}
+	rejectCluster = false
+	mu.Unlock()
 	for i := 0; i < 2; i++ {
 		gotHost, gotPort, ready, err := ApplyCreate(context.Background(), client, command, p)
 		wantPort, _ := strconv.Atoi(port)
@@ -93,6 +109,12 @@ func TestDedicatedCreateQueriesBeforeReady(t *testing.T) {
 	if queries.Load() != 2 {
 		t.Fatal("ready bypassed authenticated query")
 	}
+	mu.Lock()
+	if len(allocations) != 1 {
+		mu.Unlock()
+		t.Fatal("partial-create retry allocated another port")
+	}
+	mu.Unlock()
 	cfg := &api.DatabaseConfigPostgres{User: command.Username, Password: bootstrapPassword, Database: command.Username}
 	if err := probe(context.Background(), host, port, cfg, []byte("bad CA")); err == nil {
 		t.Fatal("wrong CA accepted")

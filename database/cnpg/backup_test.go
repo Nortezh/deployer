@@ -11,6 +11,8 @@ import (
 
 	"github.com/Nortezh/api"
 	"github.com/deploys-app/deployer/k8s"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func backupCommand() *api.DeployerCommandCNPGBackup {
@@ -22,6 +24,10 @@ func backupCommand() *api.DeployerCommandCNPGBackup {
 type backupFixture struct {
 	mu                     sync.Mutex
 	cluster, store, backup map[string]any
+	app                    *v1.Secret
+	appReads               int
+	changeApp              func(*v1.Secret)
+	lastRequest            string
 	creates                int
 	lostResponse           bool
 	forbidden              bool
@@ -39,6 +45,11 @@ func newBackupFixture(t *testing.T) (*backupFixture, *k8s.Client, Profile) {
 		"spec": map[string]any{"imageName": p.Image, "storage": map[string]any{"storageClass": p.StorageClass}, "bootstrap": map[string]any{"initdb": map[string]any{"secret": map[string]any{"name": "cnpg-1-2-app"}}},
 			"plugins": []any{map[string]any{"name": barmanPlugin, "isWALArchiver": true, "parameters": map[string]any{"barmanObjectName": "backup-store"}}}}},
 		store: map[string]any{"apiVersion": "barmancloud.cnpg.io/v1", "kind": "ObjectStore", "metadata": map[string]any{"name": "backup-store", "uid": "e1111111-1111-4111-8111-111111111111"}, "spec": map[string]any{}},
+		app: &v1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "cnpg-1-2-app", Namespace: "app-database", UID: "source-secret-uid", Labels: map[string]string{"nortezh.io/database-id": "1", "nortezh.io/project-id": "2", "nortezh.io/operation-id": backupCommand().CreateOperationID}},
+			Immutable:  func() *bool { v := true; return &v }(), Type: v1.SecretTypeBasicAuth,
+			Data: map[string][]byte{"username": []byte("app"), "password": []byte(bootstrapPassword)},
+		},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/backups/") && r.Method == http.MethodGet && f.backupLookupBarrier != nil {
@@ -61,6 +72,7 @@ func newBackupFixture(t *testing.T) (*backupFixture, *k8s.Client, Profile) {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.lastRequest = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		reply := func(x any) {
 			if err := json.NewEncoder(w).Encode(x); err != nil {
@@ -76,7 +88,16 @@ func newBackupFixture(t *testing.T) (*backupFixture, *k8s.Client, Profile) {
 		case strings.HasSuffix(r.URL.Path, "/clusters/cnpg-1-2"):
 			reply(f.cluster)
 		case strings.HasSuffix(r.URL.Path, "/secrets/cnpg-1-2-app"):
-			reply(map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "cnpg-1-2-app", "namespace": "app-database", "labels": map[string]any{"nortezh.io/database-id": "1", "nortezh.io/project-id": "2", "nortezh.io/operation-id": backupCommand().CreateOperationID}}, "immutable": true, "type": "kubernetes.io/basic-auth"})
+			f.appReads++
+			if f.appReads == 2 && f.changeApp != nil {
+				f.changeApp(f.app)
+			}
+			if f.app == nil {
+				w.WriteHeader(http.StatusNotFound)
+				reply(map[string]any{"apiVersion": "v1", "kind": "Status", "reason": "NotFound", "code": 404})
+				return
+			}
+			reply(f.app)
 		case strings.HasSuffix(r.URL.Path, "/objectstores/backup-store"):
 			if f.storeNotFound {
 				w.WriteHeader(http.StatusNotFound)

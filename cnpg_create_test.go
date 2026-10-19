@@ -34,6 +34,16 @@ func TestCNPGCreateRechecksCurrentIntentBeforeWrites(t *testing.T) {
 			t.Fatal("obsolete or mixed fresh intent reached Kubernetes")
 		}
 	}
+	// Even matching current intent must not dispatch the local-spike helper path.
+	spike := cnpg.Profile{HostSuffix: ".localhost", Port: "6109", EntryPoint: "tcp-6109", NodeName: "local", StorageClass: "local-path", Image: "pinned"}
+	if !spike.Enabled() {
+		t.Fatal("spike fixture must be enabled")
+	}
+	spikeWorker := Worker{Deployer: &rejectCNPGDeployer{commands: api.GetCommandsResult{{CNPGCreate: it}}}, Client: client, CNPG: spike}
+	spikeWorker.cnpgCreate(context.Background(), it)
+	if calls.Load() != 0 || len(spikeWorker.results) != 0 {
+		t.Fatal("local spike reached Kubernetes or acknowledged create")
+	}
 	// Matching current intent may enter reconciliation; remote errors stay sanitized.
 	d := &rejectCNPGDeployer{commands: api.GetCommandsResult{{CNPGCreate: it}}}
 	w := Worker{Deployer: d, Client: client, CNPG: p}

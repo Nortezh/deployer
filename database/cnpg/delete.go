@@ -158,6 +158,7 @@ func captureDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCN
 	name := deleteName(it)
 	ns := c.DBNamespace()
 	inv := &deleteInventory{Command: *it, Nodes: map[string]deleteNode{}}
+	// shortcut: partial creates without a root stay blocked; require a no-late-write fence before adding absent-root cleanup.
 	cluster, err := c.Dynamic().Resource(clusterGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
 	if err != nil || cluster.GetUID() == "" || cluster.GetDeletionTimestamp() != nil || cluster.GetLabels()["nortezh.io/database-id"] != strconv.FormatInt(it.ID, 10) {
 		return nil, errDeleteBlocked
