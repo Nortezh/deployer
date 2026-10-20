@@ -62,6 +62,22 @@ still block plugin-enabled databases**, even without a successful backup. Scoped
 archive cleanup/target-environment acceptance remains separately gated; this change is not rollout
 or destructive-cleanup approval and does not remediate the existing `cpng` incident.
 
+## Manual Backup target
+
+New manual Backup resources explicitly use `spec.target: primary`. On the pinned
+PostgreSQL16/Barman3.20.1 path, stock `pg_backup_stop()` switches WAL and waits for
+archival on the primary. The previous standby path with `archive_mode=on` does not
+provide that wait. This trades extra primary I/O for the stock completion behavior;
+there is no new poller, WAL-switch query, permission or SDK/Backend field.
+Existing immutable Backup resources are never patched or recreated, including those
+with an omitted/`prefer-standby` target. This does not retroactively certify their
+required WAL. Manifest/retry/restore regressions and a new pinned local native test
+(2026-10-20) passed: actual primary instance, required end-WAL present on the first
+read456ms after observed product completion, selected Restore admitted594ms after
+completion, exact data/fresh password/verify-full TLS/source preservation. No test WAL
+switch, archive wait or object-read retry was used. The isolated fixture/private
+credentials were removed; no owner environment/production rollout was performed.
+
 ## Read-only backup readiness
 
 Published SDK `.8` readiness commands now have a read-only Worker verifier. The

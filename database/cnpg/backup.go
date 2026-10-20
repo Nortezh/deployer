@@ -90,7 +90,8 @@ func ApplyBackup(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPG
 			"metadata": map[string]any{"name": backupName, "namespace": ns, "annotations": nativeAnnotations,
 				"labels":          map[string]any{"nortezh.io/database-id": strconv.FormatInt(it.ID, 10), "nortezh.io/project-id": strconv.FormatInt(it.ProjectID, 10), "nortezh.io/operation-id": it.OperationID},
 				"ownerReferences": []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": name, "uid": string(cluster.GetUID())}}},
-			"spec": map[string]any{"cluster": map[string]any{"name": name}, "method": "plugin", "pluginConfiguration": map[string]any{"name": barmanPlugin}},
+			// On a primary, stock pg_backup_stop switches and waits for required WAL.
+			"spec": map[string]any{"cluster": map[string]any{"name": name}, "target": "primary", "method": "plugin", "pluginConfiguration": map[string]any{"name": barmanPlugin}},
 		}}, metav1.CreateOptions{})
 		if apierrors.IsAlreadyExists(err) {
 			backup, err = backups.Get(ctx, backupName, metav1.GetOptions{})
