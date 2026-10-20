@@ -151,6 +151,10 @@ func main() {
 			PVCRetention:        cfg.String("cnpg_pvc_retention"),
 			StorageClass:        cfg.String("cnpg_storage_class"),
 			Image:               cfg.String("cnpg_image"),
+			BackupObjectStore:   cfg.String("cnpg_backup_object_store"),
+		}
+		if revision, err := strconv.ParseInt(cfg.String("cnpg_backup_profile_revision"), 10, 64); err == nil {
+			w.CNPG.BackupProfileRevision = revision
 		}
 		if w.CNPG.AllocationNamespace == "" || !w.CNPG.Enabled() {
 			slog.Error("CNPG enabled with incomplete or unsupported location profile")
@@ -313,8 +317,10 @@ func (w *Worker) Run() {
 		if x == nil {
 			continue
 		}
-		if x.CNPGCreate != nil || x.CNPGDelete != nil || x.CNPGBackup != nil || x.CNPGRestore != nil {
-			if x.CNPGRestore != nil && x.ValidCNPG() == nil {
+		if x.CNPGCreate != nil || x.CNPGDelete != nil || x.CNPGBackup != nil || x.CNPGRestore != nil || x.CNPGBackupReadiness != nil {
+			if x.CNPGBackupReadiness != nil && x.ValidCNPG() == nil {
+				w.cnpgBackupReadiness(ctx, x.CNPGBackupReadiness)
+			} else if x.CNPGRestore != nil && x.ValidCNPG() == nil {
 				w.cnpgRestore(ctx, x.CNPGRestore)
 			} else if x.CNPGBackup != nil && x.ValidCNPG() == nil {
 				w.cnpgBackup(ctx, x.CNPGBackup)

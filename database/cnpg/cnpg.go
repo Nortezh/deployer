@@ -34,6 +34,8 @@ var routeGVR = schema.GroupVersionResource{Group: "traefik.io", Version: "v1alph
 type Profile struct {
 	HostSuffix, Port, EntryPoint, NodeName, StorageClass, Image string
 	AllocationNamespace, PortRange, PVCRetention                string
+	BackupObjectStore                                           string
+	BackupProfileRevision                                       int64
 }
 
 func (p Profile) Enabled() bool {

@@ -24,6 +24,11 @@ import (
 // no postgres process, container, persistent fixture or production credential.
 func testPostgresTLS(t *testing.T, password string) (string, string, []byte, *atomic.Int64) {
 	t.Helper()
+	return testPostgresTLSQuery(t, password, "SELECT 1", "1")
+}
+
+func testPostgresTLSQuery(t *testing.T, password, query, result string) (string, string, []byte, *atomic.Int64) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -111,22 +116,47 @@ func testPostgresTLS(t *testing.T, password string) (string, string, []byte, *at
 				if !send('R', []byte{0, 0, 0, 0}) || !send('Z', []byte{'I'}) {
 					return
 				}
+				transactionStatus := byte('I')
+				catalogOnly := false
 				for {
 					kind, body, err := read()
 					if err != nil || kind == 'X' {
 						return
 					}
-					if kind != 'Q' || strings.TrimSpace(strings.TrimRight(string(body), "\x00")) != "SELECT 1" {
+					if kind != 'Q' {
+						return
+					}
+					statement := strings.TrimSpace(strings.TrimRight(string(body), "\x00"))
+					if statement == "BEGIN READ ONLY" || statement == "SET LOCAL search_path = pg_catalog" || statement == "ROLLBACK" {
+						tag := "SET"
+						switch statement {
+						case "BEGIN READ ONLY":
+							transactionStatus, tag = 'T', "BEGIN"
+						case "ROLLBACK":
+							transactionStatus, tag = 'I', "ROLLBACK"
+						default:
+							catalogOnly = true
+						}
+						if !send('C', []byte(tag+"\x00")) || !send('Z', []byte{transactionStatus}) {
+							return
+						}
+						continue
+					}
+					if statement != query || query == readinessWALQuery && (transactionStatus != 'T' || !catalogOnly) {
 						return
 					}
 					var row bytes.Buffer
 					_ = binary.Write(&row, binary.BigEndian, uint16(1))
 					row.WriteString("?column?\x00")
-					for _, v := range []any{uint32(0), uint16(0), uint32(23), int16(4), int32(-1), uint16(0)} {
+					for _, v := range []any{uint32(0), uint16(0), uint32(20), int16(8), int32(-1), uint16(0)} {
 						_ = binary.Write(&row, binary.BigEndian, v)
 					}
 					queries.Add(1)
-					if !send('T', row.Bytes()) || !send('D', []byte{0, 1, 0, 0, 0, 1, '1'}) || !send('C', []byte("SELECT 1\x00")) || !send('Z', []byte{'I'}) {
+					var data bytes.Buffer
+					_ = binary.Write(&data, binary.BigEndian, uint16(1))
+					_ = binary.Write(&data, binary.BigEndian, uint32(len(result)))
+					data.WriteString(result)
+					if !send('T', row.Bytes()) || !send('D', data.Bytes()) || !send('C', []byte("SELECT 1\x00")) || !send('Z', []byte{transactionStatus}) {
 						return
 					}
 				}
