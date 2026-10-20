@@ -244,21 +244,36 @@ func readinessPodHealthy(pod *v1.Pod, image string) bool {
 	if !ready {
 		return false
 	}
-	postgresImage, pluginImage := false, false
+	postgresImage, pluginImage, pluginFound := false, false, false
+	pluginStatuses := pod.Status.ContainerStatuses
 	for _, container := range pod.Spec.Containers {
 		postgresImage = postgresImage || container.Name == "postgres" && container.Image == image
-		pluginImage = pluginImage || container.Name == "plugin-barman-cloud" && container.Image == readinessSidecarImage
+		if container.Name == "plugin-barman-cloud" {
+			if pluginFound {
+				return false
+			}
+			pluginFound, pluginImage = true, container.Image == readinessSidecarImage
+		}
+	}
+	for _, container := range pod.Spec.InitContainers {
+		if container.Name != "plugin-barman-cloud" {
+			continue
+		}
+		if pluginFound || container.RestartPolicy == nil || *container.RestartPolicy != v1.ContainerRestartPolicyAlways {
+			return false
+		}
+		pluginFound, pluginImage = true, container.Image == readinessSidecarImage
+		pluginStatuses = pod.Status.InitContainerStatuses
 	}
 	if !postgresImage || !pluginImage {
 		return false
 	}
 	postgres, plugin := false, false
 	for _, status := range pod.Status.ContainerStatuses {
-		if !status.Ready || status.State.Running == nil {
-			continue
-		}
-		postgres = postgres || status.Name == "postgres"
-		plugin = plugin || status.Name == "plugin-barman-cloud"
+		postgres = postgres || status.Name == "postgres" && status.Ready && status.State.Running != nil
+	}
+	for _, status := range pluginStatuses {
+		plugin = plugin || status.Name == "plugin-barman-cloud" && status.Ready && status.State.Running != nil
 	}
 	return postgres && plugin
 }

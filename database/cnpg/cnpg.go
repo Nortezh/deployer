@@ -125,6 +125,13 @@ func apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 		if recovery != nil {
 			spec["externalClusters"] = externalClusters
 		}
+		// A historical source may use a custom server name equal to this target.
+		// Never archive a restored target into its selected source's prefix.
+		if recovery == nil || recovery.Material.ServerName != name {
+			if plugins := createBackupPlugins(ctx, c, p, name); len(plugins) != 0 {
+				spec["plugins"] = plugins
+			}
+		}
 		if resources := database.ResourcesBlock(it.Resources); resources != nil {
 			spec["resources"] = resources
 		}

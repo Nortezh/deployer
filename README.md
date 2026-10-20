@@ -28,11 +28,46 @@ external recovery source or its ObjectStore. New backups on restored targets are
 unavailable until target WAL archiving and backup lifecycle are supported; the
 Backend rejects admission and reports `backupAvailable=false` for these targets.
 
+## Creation-time Barman binding
+
+Only a **new** operational Cluster is given `spec.plugins` when the optional backup
+profile has a positive revision and the referenced ObjectStore/credential metadata
+passes the existing supported-profile preflight. The WAL archiver is
+`barman-cloud.cloudnative-pg.io`, with `barmanObjectName` from the location profile and
+`serverName` equal to the immutable Cluster name (`cnpg-<database ID>-<project ID>`).
+The Worker does not create or modify an ObjectStore, credentials, IAM or retention.
+
+Missing/incomplete/unsupported/unreadable backup prerequisites create an ordinary
+Cluster without the plugin; they do not prevent database provisioning. Creation-time
+preflight is not runtime proof: plugin/operator/storage failures or changes after the
+snapshot can still delay provisioning or disable backups. Existing TLS/query checks
+remain authoritative for database Ready, and the separate verifier/Backend gates
+remain authoritative for backup availability.
+
+The binding is evaluated only when the Cluster GET returns NotFound. A retry after a
+lost create response preserves the existing manifest, even if backup configuration
+later changes. No existing Cluster is patched or has plugins removed. A Cluster first
+created without backup still needs explicit administrator backfill when prerequisites
+become available; a retry is not backfill.
+
+Restored targets keep their selected recovery source in `externalClusters` and receive
+a distinct target WAL archive binding under the same creation-only policy. A historical
+source archive name equal to the target's immutable name suppresses target archiving
+rather than reusing that prefix; recovery remains bound to the selected source. This
+is target manifest support, not restored-source backup admission/verification support.
+
+Enabling a profile starts continuous WAL archiving on new ordinary/restored databases,
+even before a manual backup; cap7 is not a WAL-byte bound. **Existing deletion guards
+still block plugin-enabled databases**, even without a successful backup. Scoped
+archive cleanup/target-environment acceptance remains separately gated; this change is not rollout
+or destructive-cleanup approval and does not remediate the existing `cpng` incident.
+
 ## Read-only backup readiness
 
-Published SDK `.8` readiness commands now have a Worker verifier. This does **not**
-configure plugins, backfill databases, create backups, change IAM or enable a location.
-Ordinary create remains independent of the optional backup settings:
+Published SDK `.8` readiness commands now have a read-only Worker verifier. The
+verifier itself never configures plugins, backfills databases, creates backups,
+changes IAM or enables a location. Ordinary create remains independent of missing
+optional backup settings:
 
 - `CNPG_BACKUP_OBJECT_STORE`: exact ObjectStore name in the database namespace.
 - `CNPG_BACKUP_PROFILE_REVISION`: positive revision matching the Backend-owned profile.
@@ -47,7 +82,10 @@ configuration requires separate owner approval before use on an existing environ
 The supported observation is an ordinary initdb source with the owned immutable
 bootstrap Secret, HA2/Ready/ContinuousArchiving success, loaded plugin `0.15.1`, and a
 running owned primary with the profile PostgreSQL image and the pinned Barman sidecar
-from the recorded `0.15.1` manifest. S3 configuration must use an explicit endpoint and
+from the recorded `0.15.1` manifest. The archiver can be a regular container or a
+restartable init container (`restartPolicy: Always`); its corresponding status must
+be running and ready. One-shot init containers and conflicting layouts are rejected.
+S3 configuration must use an explicit endpoint and
 `accessKeyId`/`secretAccessKey` name/key Secret selectors. Optional compression is gzip;
 positive WAL `maxParallel`, data `jobs` and boolean `immediateCheckpoint` are supported.
 Automatic retention, other providers/credential modes, endpoint CA overrides, custom
@@ -82,11 +120,23 @@ digest even if values happen to be unchanged. The Backend expected digest must b
 reviewed/configured independently, not auto-adopted from a Worker observation. The
 fingerprint test fixes a public synthetic golden vector for this format.
 
-Tests use HTTP Kubernetes mocks and a synthetic PostgreSQL wire server with real
-TLS/password exchange; they do not prove native Barman/MinIO uploads or real SQL
-execution. No native fixture was created for this verifier change. Provisioning,
-explicit administrator backfill, restored-source backups and archive deletion remain
-separate follow-ups.
+Unit tests use HTTP Kubernetes mocks and a synthetic PostgreSQL wire server with real
+TLS/password exchange. Separately approved local native acceptance (2026-10-20) used a
+fresh k3s1.31.11/CNPG1.27.4/PostgreSQL16.15/Barman0.15.1/MinIO fixture and published SDK
+`.8`: automatic source binding, actual read-only SQL/WAL verification and Backend
+admission, Backup catalog/base/end-WAL, selected physical Restore with fresh password/TLS,
+and distinct target WAL prefix passed. The fixture exposed the restartable-init layout;
+the verifier fix passed native execution and regression tests. Source creation preceded
+that verifier-only fix; Restore used the rebuilt Worker. No Cluster was manually patched.
+
+Stock Backup `completed`/catalog `DONE` can precede archival of its still-open tail WAL
+(`archive_timeout=5min` in the fixture). Explicit fixture WAL switches and read-only
+object checks established required end-WAL persistence before Restore; this does not
+prove immediate restore-after-DONE or change product completion semantics. The verifier
+never switches WAL. The whole isolated fixture/private credentials were removed; this
+is not product archive-cleanup proof. Explicit administrator backfill, restored-source
+backups, native failure injection, target-environment/R2 acceptance and safe archive
+deletion remain separate follow-ups.
 
 The isolated local spike remains behind `LOCAL=true` and
 `CNPG_DISPOSABLE_SPIKE=true` with its separate explicit profile.
