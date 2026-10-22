@@ -39,6 +39,7 @@ type CronJob struct {
 	Pool          PoolConfig
 	BindConfigMap map[string]string // key => file path
 	Sidecars      []*api.SidecarConfig
+	PodLabels     map[string]string // extra pod labels
 }
 
 func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
@@ -107,7 +108,7 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 	cj.Spec.JobTemplate.Spec.ActiveDeadlineSeconds = pointer.Int64(int64(12 * time.Hour / time.Second))
 	cj.Spec.JobTemplate.Spec.TTLSecondsAfterFinished = pointer.Int32(int32(24 * time.Hour / time.Second))
 	cj.Spec.JobTemplate.Spec.Template.ObjectMeta = metav1.ObjectMeta{
-		Labels: label,
+		Labels: podLabels(label, obj.PodLabels),
 	}
 	cj.Spec.JobTemplate.Spec.Template.Spec.AutomountServiceAccountToken = pointer.Bool(false)
 

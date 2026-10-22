@@ -79,6 +79,7 @@ type Deployment struct {
 	Sidecars      []*api.SidecarConfig
 	ForceSpot     bool
 	HealthCheck   api.DeploymentHealthCheck
+	PodLabels     map[string]string // extra pod labels; never part of the selector
 }
 
 func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
@@ -228,7 +229,7 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 	deploy.Spec.Replicas = pointer.Int32(int32(obj.Replicas))
 	deploy.Spec.RevisionHistoryLimit = pointer.Int32(1)
 	deploy.Spec.Template.ObjectMeta = metav1.ObjectMeta{
-		Labels:      label,
+		Labels:      podLabels(label, obj.PodLabels),
 		Annotations: obj.Annotations,
 	}
 	deploy.Spec.Template.Spec.AutomountServiceAccountToken = pointer.Bool(false)
