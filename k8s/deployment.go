@@ -79,7 +79,7 @@ type Deployment struct {
 	Sidecars      []*api.SidecarConfig
 	ForceSpot     bool
 	HealthCheck   api.DeploymentHealthCheck
-	PodLabels     map[string]string // extra pod labels; never part of the selector
+	PodLabels     map[string]string // extra labels on the deployment and its pods; never part of the selector
 }
 
 func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
@@ -198,7 +198,7 @@ func (c *Client) CreateDeployment(ctx context.Context, obj Deployment) error {
 		deploy = &appsv1.Deployment{}
 	}
 	deploy.ObjectMeta.Name = obj.ID
-	deploy.ObjectMeta.Labels = label
+	deploy.ObjectMeta.Labels = podLabels(label, obj.PodLabels)
 	deploy.ObjectMeta.Annotations = annotations
 	deploy.Spec = appsv1.DeploymentSpec{} // reset
 	deploy.Spec.Selector = &metav1.LabelSelector{

@@ -39,7 +39,7 @@ type CronJob struct {
 	Pool          PoolConfig
 	BindConfigMap map[string]string // key => file path
 	Sidecars      []*api.SidecarConfig
-	PodLabels     map[string]string // extra pod labels
+	PodLabels     map[string]string // extra labels on the cronjob, its jobs and pods
 }
 
 func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
@@ -94,7 +94,7 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 		cj = &batchv1.CronJob{}
 	}
 	cj.ObjectMeta.Name = obj.ID
-	cj.ObjectMeta.Labels = label
+	cj.ObjectMeta.Labels = podLabels(label, obj.PodLabels)
 	cj.ObjectMeta.Annotations = annotations
 	cj.Spec = batchv1.CronJobSpec{} // reset
 	cj.Spec.Schedule = obj.Schedule
@@ -103,7 +103,7 @@ func (c *Client) CreateCronJob(ctx context.Context, obj CronJob) error {
 	cj.Spec.SuccessfulJobsHistoryLimit = pointer.Int32(1)
 	cj.Spec.FailedJobsHistoryLimit = pointer.Int32(1)
 	cj.Spec.JobTemplate.ObjectMeta = metav1.ObjectMeta{
-		Labels: label,
+		Labels: podLabels(label, obj.PodLabels),
 	}
 	cj.Spec.JobTemplate.Spec.ActiveDeadlineSeconds = pointer.Int64(int64(12 * time.Hour / time.Second))
 	cj.Spec.JobTemplate.Spec.TTLSecondsAfterFinished = pointer.Int32(int32(24 * time.Hour / time.Second))
