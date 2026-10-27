@@ -254,6 +254,27 @@ func (w *Worker) normalizeLimitCPU(limit string) string {
 	return limit
 }
 
+// logLabels returns the pod labels that ship a deployment's logs to the log store, or nil when the
+// location lacks the logs-v2 feature or the deployment has log history off. Traces and metrics stay
+// off (rate 0); the cluster id comes from the log gateway login, not from a label.
+func (w *Worker) logLabels(projectID, name string, logs *api.DeploymentLogs) map[string]string {
+	if w.location == nil || w.location.Features.LogsV2 == nil || logs == nil || !logs.Enabled {
+		return nil
+	}
+	logs = logs.WithDefaults()
+	if logs.Valid() != nil {
+		return nil
+	}
+	return map[string]string{
+		"seer.io/project_id":   projectID,
+		"seer.io/app_id":       name,
+		"seer.io/rate-logs":    strconv.Itoa(logs.Rate),
+		"seer.io/rate-spans":   "0",
+		"seer.io/rate-metrics": "0",
+		"seer.io/retention":    logs.Retention,
+	}
+}
+
 // googleAuthConfig builds the external-ingress config that gates a deployment behind the
 // authgate verifier when google auth is enabled. Returns a zero config (no auth annotation)
 // when disabled, when the allowlist is empty, or when the cluster has no verifier URL.
@@ -557,6 +578,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				ProjectID:     projectID,
 				Name:          it.Name,
 				Revision:      it.Revision,
+				PodLabels:     w.logLabels(projectID, it.Name, it.Spec.Logs),
 				Image:         it.Spec.Image,
 				Env:           it.Spec.Env,
 				SecretEnvs:    it.Spec.SecretEnvs,
@@ -683,6 +705,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				ProjectID:     projectID,
 				Name:          it.Name,
 				Revision:      it.Revision,
+				PodLabels:     w.logLabels(projectID, it.Name, it.Spec.Logs),
 				Image:         it.Spec.Image,
 				Env:           it.Spec.Env,
 				SecretEnvs:    it.Spec.SecretEnvs,
@@ -757,6 +780,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				ProjectID:     projectID,
 				Name:          it.Name,
 				Revision:      it.Revision,
+				PodLabels:     w.logLabels(projectID, it.Name, it.Spec.Logs),
 				Image:         it.Spec.Image,
 				Env:           it.Spec.Env,
 				SecretEnvs:    it.Spec.SecretEnvs,
@@ -808,6 +832,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				ProjectID:     projectID,
 				Name:          it.Name,
 				Revision:      it.Revision,
+				PodLabels:     w.logLabels(projectID, it.Name, it.Spec.Logs),
 				Image:         it.Spec.Image,
 				Env:           it.Spec.Env,
 				SecretEnvs:    it.Spec.SecretEnvs,
@@ -885,6 +910,7 @@ func (w *Worker) deploymentDeploy(ctx context.Context, it *api.DeployerCommandDe
 				ProjectID:     projectID,
 				Name:          it.Name,
 				Revision:      it.Revision,
+				PodLabels:     w.logLabels(projectID, it.Name, it.Spec.Logs),
 				Image:         it.Spec.Image,
 				Env:           it.Spec.Env,
 				SecretEnvs:    it.Spec.SecretEnvs,

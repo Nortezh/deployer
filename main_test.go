@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/Nortezh/api"
@@ -109,5 +110,47 @@ func TestSecretResultIsRedacted(t *testing.T) {
 	}
 	if want := `{"secretUpsert":{"secretId":1,"revision":2,"success":true}}`; string(got) != want {
 		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+func TestLogLabels(t *testing.T) {
+	on := &api.LocationItem{Features: api.LocationFeatures{LogsV2: &struct{}{}}}
+	off := &api.LocationItem{}
+	enabled := &api.DeploymentLogs{Enabled: true, Retention: "30d", Rate: 100}
+
+	for _, tt := range []struct {
+		name     string
+		location *api.LocationItem
+		logs     *api.DeploymentLogs
+		want     map[string]string
+	}{
+		{"no location yet", nil, enabled, nil},
+		{"location without logs-v2", off, enabled, nil},
+		{"no logs config", on, nil, nil},
+		{"logs off", on, &api.DeploymentLogs{Retention: "30d", Rate: 100}, nil},
+		{"invalid tier", on, &api.DeploymentLogs{Enabled: true, Retention: "1y", Rate: 100}, nil},
+		{"enabled", on, enabled, map[string]string{
+			"seer.io/project_id":   "42",
+			"seer.io/app_id":       "web",
+			"seer.io/rate-logs":    "100",
+			"seer.io/rate-spans":   "0",
+			"seer.io/rate-metrics": "0",
+			"seer.io/retention":    "30d",
+		}},
+		{"enabled with defaults", on, &api.DeploymentLogs{Enabled: true}, map[string]string{
+			"seer.io/project_id":   "42",
+			"seer.io/app_id":       "web",
+			"seer.io/rate-logs":    "500",
+			"seer.io/rate-spans":   "0",
+			"seer.io/rate-metrics": "0",
+			"seer.io/retention":    "7d",
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			w := &Worker{location: tt.location}
+			if got := w.logLabels("42", "web", tt.logs); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
