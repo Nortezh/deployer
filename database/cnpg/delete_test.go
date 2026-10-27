@@ -164,7 +164,7 @@ func newDeleteFixture(t *testing.T) (*k8s.Client, *deleteFixture) {
 }
 
 func TestStandardDeleteWaitsForOwnedResourcesAndSecret(t *testing.T) {
-	for _, mode := range []string{"initdb", "recovery"} {
+	for _, mode := range []string{"initdb", "recovery", "longhorn"} {
 		t.Run(mode, func(t *testing.T) { testStandardDeleteLifecycle(t, mode) })
 	}
 }
@@ -190,6 +190,9 @@ func testStandardDeleteLifecycle(t *testing.T, mode string) {
 	}
 	ctx := context.Background()
 	p := deleteProfile()
+	if mode == "longhorn" {
+		p = longhornDeleteProfile(f)
+	}
 	// Full lifecycle also works with create disabled and a degraded HA2 database.
 	p.Image, p.PortRange = "", ""
 	f.objects["/apis/postgresql.cnpg.io/v1/namespaces/app-database/clusters/cnpg-1-2"]["status"].(map[string]any)["readyInstances"] = 0

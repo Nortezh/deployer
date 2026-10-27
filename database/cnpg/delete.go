@@ -12,12 +12,16 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 )
 
 var errDeleteBlocked = errors.New("CNPG managed cleanup pending or blocked")
+
+const longhornDriver = "driver.longhorn.io"
+const csiDeleteFinalizer = "external-provisioner.volume.kubernetes.io/finalizer"
 
 type deleteObject struct {
 	Kind, Name string
@@ -33,6 +37,8 @@ type deleteInventory struct {
 	Nodes                                             map[string]deleteNode
 	StorageClassUID, ProvisionerUID, AllocationMapUID types.UID
 	AllocationKey                                     string
+	StorageDriver, StorageClassName                   string
+	CSIHandles                                        map[string]string
 }
 
 func deleteName(it *api.DeployerCommandCNPGDelete) string {
@@ -56,7 +62,7 @@ func deleteOptions(o metav1.Object) metav1.DeleteOptions {
 // ApplyDelete retires managed resources, not disconnected-node processes or forensic copies.
 // The immutable inventory survives retries and remains a non-secret retirement marker.
 func ApplyDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPGDelete, p Profile) (bool, error) {
-	if c == nil || it == nil || it.Valid() != nil || p.AllocationNamespace == "" || p.PVCRetention != "delete" || p.StorageClass != "local-path" {
+	if c == nil || it == nil || it.Valid() != nil || p.AllocationNamespace == "" || p.PVCRetention != "delete" || p.StorageClass == "" {
 		return false, errDeleteBlocked
 	}
 	name := deleteName(it)
@@ -132,7 +138,14 @@ func ApplyDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPG
 func inventoryMatches(inv *deleteInventory, it *api.DeployerCommandCNPGDelete) bool {
 	expected := *it
 	expected.Phase = api.CNPGDeleteResources
-	if inv.Command != expected || len(inv.Nodes) == 0 || inv.AllocationKey == "" || inv.StorageClassUID == "" || inv.ProvisionerUID == "" || inv.AllocationMapUID == "" {
+	if inv.Command != expected || len(inv.Nodes) == 0 || inv.AllocationKey == "" || inv.StorageClassUID == "" || inv.AllocationMapUID == "" {
+		return false
+	}
+	if inv.StorageDriver == "" {
+		if inv.ProvisionerUID == "" || inv.StorageClassName != "" || len(inv.CSIHandles) != 0 {
+			return false
+		}
+	} else if inv.StorageDriver != longhornDriver || inv.ProvisionerUID != "" || inv.StorageClassName == "" || len(inv.CSIHandles) != 2 {
 		return false
 	}
 	if len(inv.Objects) < 3 || inv.Objects[0].Kind != "Cluster" || inv.Objects[0].Name != deleteName(it) {
@@ -144,12 +157,19 @@ func inventoryMatches(inv *deleteInventory, it *api.DeployerCommandCNPGDelete) b
 	uids := map[types.UID]bool{}
 	for _, o := range inv.Objects {
 		key := o.Kind + "/" + o.Name
-		if o.UID == "" || o.Name == "" || seen[key] || uids[o.UID] || !allowed[o.Kind] {
+		if o.UID == "" || o.Name == "" || seen[key] || uids[o.UID] || !allowed[o.Kind] || (inv.StorageDriver != "" && o.Kind == "PV" && inv.CSIHandles[o.Name] == "") {
 			return false
 		}
 		seen[key] = true
 		uids[o.UID] = true
 		kinds[o.Kind] = true
+	}
+	handles := map[string]bool{}
+	for name, handle := range inv.CSIHandles {
+		if !seen["PV/"+name] || handle == "" || handles[handle] {
+			return false
+		}
+		handles[handle] = true
 	}
 	return seen["Route/"+deleteName(it)] && seen["Bootstrap/"+deleteName(it)+"-app"] && kinds["PVC"] && kinds["PV"]
 }
@@ -158,6 +178,16 @@ func captureDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCN
 	name := deleteName(it)
 	ns := c.DBNamespace()
 	inv := &deleteInventory{Command: *it, Nodes: map[string]deleteNode{}}
+	storage, err := c.Core().StorageV1().StorageClasses().Get(ctx, p.StorageClass, metav1.GetOptions{})
+	if err != nil || storage.UID == "" || storage.DeletionTimestamp != nil {
+		return nil, errDeleteBlocked
+	}
+	inv.StorageClassUID = storage.UID
+	if storage.Provisioner == longhornDriver {
+		inv.StorageDriver, inv.StorageClassName, inv.CSIHandles = longhornDriver, p.StorageClass, map[string]string{}
+	} else if p.StorageClass != "local-path" || storage.Provisioner != "rancher.io/local-path" {
+		return nil, errDeleteBlocked
+	}
 	// shortcut: partial creates without a root stay blocked; require a no-late-write fence before adding absent-root cleanup.
 	cluster, err := c.Dynamic().Resource(clusterGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
 	if err != nil || cluster.GetUID() == "" || cluster.GetDeletionTimestamp() != nil || cluster.GetLabels()["nortezh.io/database-id"] != strconv.FormatInt(it.ID, 10) {
@@ -204,10 +234,14 @@ func captureDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCN
 			return nil, errDeleteBlocked
 		}
 		pv, err := c.Core().CoreV1().PersistentVolumes().Get(ctx, pvc.Spec.VolumeName, metav1.GetOptions{})
-		if err != nil || !deletePVMatches(pv, &pvc, p.StorageClass) {
+		if err != nil || !deletePVMatches(pv, &pvc, p.StorageClass, inv.StorageDriver) {
 			return nil, errDeleteBlocked
 		}
 		inv.Objects = append(inv.Objects, deleteObject{"PVC", pvc.Name, pvc.UID}, deleteObject{"PV", pv.Name, pv.UID})
+		if inv.StorageDriver == longhornDriver {
+			inv.CSIHandles[pv.Name] = pv.Spec.CSI.VolumeHandle
+			continue
+		}
 		affinity := pv.Spec.NodeAffinity
 		if affinity == nil || affinity.Required == nil || len(affinity.Required.NodeSelectorTerms) != 1 {
 			return nil, errDeleteBlocked
@@ -318,24 +352,35 @@ func captureDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCN
 		}
 		inv.Nodes[node] = deleteNode{n.UID, n.Status.NodeInfo.BootID}
 	}
-	storage, err := c.Core().StorageV1().StorageClasses().Get(ctx, p.StorageClass, metav1.GetOptions{})
-	if err != nil {
-		return nil, errDeleteBlocked
+	if inv.StorageDriver == "" {
+		provisioner, err := c.Core().AppsV1().Deployments("kube-system").Get(ctx, "local-path-provisioner", metav1.GetOptions{})
+		if err != nil {
+			return nil, errDeleteBlocked
+		}
+		inv.ProvisionerUID = provisioner.UID
 	}
-	inv.StorageClassUID = storage.UID
-	provisioner, err := c.Core().AppsV1().Deployments("kube-system").Get(ctx, "local-path-provisioner", metav1.GetOptions{})
-	if err != nil {
-		return nil, errDeleteBlocked
-	}
-	inv.ProvisionerUID = provisioner.UID
 	if !inventoryMatches(inv, it) || checkDeleteProfile(ctx, c, p, inv) != nil || checkDeleteDependents(ctx, c, name, inv) != nil {
 		return nil, errDeleteBlocked
 	}
 	return inv, nil
 }
 
-func deletePVMatches(pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim, storage string) bool {
-	return pv != nil && pv.UID != "" && pv.DeletionTimestamp == nil && pv.Spec.PersistentVolumeReclaimPolicy == v1.PersistentVolumeReclaimDelete && pv.Spec.StorageClassName == storage && (pv.Spec.HostPath != nil || (pv.Spec.Local != nil && pv.Spec.Local.Path != "")) && pv.Spec.ClaimRef != nil && pv.Spec.ClaimRef.UID == pvc.UID && pv.Spec.ClaimRef.Name == pvc.Name && pv.Spec.ClaimRef.Namespace == pvc.Namespace
+func deletePVMatches(pv *v1.PersistentVolume, pvc *v1.PersistentVolumeClaim, storage, driver string) bool {
+	if pv == nil {
+		return false
+	}
+	handle := ""
+	if pv.Spec.CSI != nil {
+		handle = pv.Spec.CSI.VolumeHandle
+	}
+	return pv.UID != "" && pv.DeletionTimestamp == nil && pv.Spec.PersistentVolumeReclaimPolicy == v1.PersistentVolumeReclaimDelete && pv.Spec.StorageClassName == storage && deletePVSourceMatches(pv, driver, handle) && pv.Spec.ClaimRef != nil && pv.Spec.ClaimRef.UID == pvc.UID && pv.Spec.ClaimRef.Name == pvc.Name && pv.Spec.ClaimRef.Namespace == pvc.Namespace
+}
+
+func deletePVSourceMatches(pv *v1.PersistentVolume, driver, handle string) bool {
+	if driver == longhornDriver {
+		return pv.Spec.CSI != nil && pv.Spec.CSI.Driver == driver && handle != "" && pv.Spec.CSI.VolumeHandle == handle && slices.Contains(pv.Finalizers, csiDeleteFinalizer)
+	}
+	return driver == "" && pv.Spec.StorageClassName == "local-path" && (pv.Spec.HostPath != nil || (pv.Spec.Local != nil && pv.Spec.Local.Path != ""))
 }
 
 func deleteNodeReady(n *v1.Node) bool {
@@ -366,12 +411,21 @@ func checkDeleteProfile(ctx context.Context, c *k8s.Client, p Profile, inv *dele
 		}
 	}
 	sc, err := c.Core().StorageV1().StorageClasses().Get(ctx, p.StorageClass, metav1.GetOptions{})
-	if err != nil || sc.UID != inv.StorageClassUID || sc.DeletionTimestamp != nil || sc.Provisioner != "rancher.io/local-path" || sc.ReclaimPolicy == nil || *sc.ReclaimPolicy != v1.PersistentVolumeReclaimDelete || sc.VolumeBindingMode == nil || *sc.VolumeBindingMode != "WaitForFirstConsumer" {
+	if err != nil || sc.UID != inv.StorageClassUID || sc.DeletionTimestamp != nil || sc.ReclaimPolicy == nil || *sc.ReclaimPolicy != v1.PersistentVolumeReclaimDelete || sc.VolumeBindingMode == nil {
 		return errDeleteBlocked
 	}
-	d, err := c.Core().AppsV1().Deployments("kube-system").Get(ctx, "local-path-provisioner", metav1.GetOptions{})
-	if err != nil || d.UID != inv.ProvisionerUID || d.DeletionTimestamp != nil || d.Status.AvailableReplicas < 1 || len(d.Spec.Template.Spec.Containers) != 1 || !strings.HasPrefix(d.Spec.Template.Spec.Containers[0].Image, "rancher/local-path-provisioner:") {
-		return errDeleteBlocked
+	if inv.StorageDriver == longhornDriver {
+		if p.StorageClass != inv.StorageClassName || sc.Provisioner != longhornDriver || *sc.VolumeBindingMode != "Immediate" {
+			return errDeleteBlocked
+		}
+	} else {
+		if sc.Provisioner != "rancher.io/local-path" || *sc.VolumeBindingMode != "WaitForFirstConsumer" {
+			return errDeleteBlocked
+		}
+		d, err := c.Core().AppsV1().Deployments("kube-system").Get(ctx, "local-path-provisioner", metav1.GetOptions{})
+		if err != nil || d.UID != inv.ProvisionerUID || d.DeletionTimestamp != nil || d.Status.AvailableReplicas < 1 || len(d.Spec.Template.Spec.Containers) != 1 || !strings.HasPrefix(d.Spec.Template.Spec.Containers[0].Image, "rancher/local-path-provisioner:") {
+			return errDeleteBlocked
+		}
 	}
 	for _, resource := range []string{"backups", "scheduledbackups"} {
 		list, err := c.Dynamic().Resource(clusterGVR.GroupVersion().WithResource(resource)).Namespace(c.DBNamespace()).List(ctx, metav1.ListOptions{})
@@ -484,14 +538,22 @@ func checkDeleteDependents(ctx context.Context, c *k8s.Client, name string, inv 
 	}
 	for _, pv := range pvs.Items {
 		tracked := false
-		for _, obj := range inv.Objects {
+		for i, obj := range inv.Objects {
 			if obj.Kind == "PV" && obj.Name == pv.Name {
+				if pv.UID != obj.UID || i == 0 || inv.Objects[i-1].Kind != "PVC" || pv.Spec.ClaimRef == nil || pv.Spec.ClaimRef.Name != inv.Objects[i-1].Name || pv.Spec.ClaimRef.UID != inv.Objects[i-1].UID {
+					return errDeleteBlocked
+				}
 				tracked = true
 			}
 		}
 		relevant := pv.Spec.ClaimRef != nil && pv.Spec.ClaimRef.Namespace == c.DBNamespace() && (claims[pv.Spec.ClaimRef.Name] || strings.HasPrefix(pv.Spec.ClaimRef.Name, name+"-"))
+		for name, handle := range inv.CSIHandles {
+			if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == inv.StorageDriver && pv.Spec.CSI.VolumeHandle == handle && pv.Name != name {
+				return errDeleteBlocked
+			}
+		}
 		if tracked || relevant {
-			if !known[pv.UID] || pv.Spec.ClaimRef == nil || pv.Spec.ClaimRef.Namespace != c.DBNamespace() || !claims[pv.Spec.ClaimRef.Name] || !known[pv.Spec.ClaimRef.UID] || pv.Spec.PersistentVolumeReclaimPolicy != v1.PersistentVolumeReclaimDelete || pv.Spec.StorageClassName != "local-path" || (pv.Spec.HostPath == nil && (pv.Spec.Local == nil || pv.Spec.Local.Path == "")) {
+			if !known[pv.UID] || pv.Spec.ClaimRef == nil || pv.Spec.ClaimRef.Namespace != c.DBNamespace() || !claims[pv.Spec.ClaimRef.Name] || !known[pv.Spec.ClaimRef.UID] || pv.Spec.PersistentVolumeReclaimPolicy != v1.PersistentVolumeReclaimDelete || !deletePVSourceMatches(&pv, inv.StorageDriver, inv.CSIHandles[pv.Name]) || (inv.StorageDriver != "" && pv.Spec.StorageClassName != inv.StorageClassName) {
 				return errDeleteBlocked
 			}
 		}
