@@ -101,6 +101,7 @@ func newRetentionFixture(t *testing.T) (*retentionFixture, *backupFixture, *k8s.
 			f.creates++
 			_ = json.NewDecoder(r.Body).Decode(&f.job)
 			f.job.UID = "f2222222-2222-4222-8222-222222222222"
+			f.job.Spec.Template.Spec.DeprecatedServiceAccount = f.job.Spec.Template.Spec.ServiceAccountName
 			if f.lost {
 				w.WriteHeader(504)
 				reply(map[string]any{"apiVersion": "v1", "kind": "Status", "reason": "Timeout", "code": 504})
@@ -207,6 +208,34 @@ func TestRetentionCalledJobCheckpointAndACKLoss(t *testing.T) {
 		if env.Name == "AWS_SECRET_ACCESS_KEY" && (env.Value != "" || env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil) {
 			t.Fatal("credential value in manifest")
 		}
+	}
+}
+
+func TestRetentionServiceAccountDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name, account, alias string
+		matches              bool
+	}{
+		{"empty-alias", "default", "", true},
+		{"matching-alias", "default", "default", true},
+		{"conflicting-alias", "default", "foreign", false},
+		{"changed-account", "foreign", "", false},
+		{"changed-account-and-alias", "foreign", "foreign", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			expected := &batchv1.Job{Spec: batchv1.JobSpec{Template: v1.PodTemplateSpec{Spec: v1.PodSpec{ServiceAccountName: "default"}}}}
+			actual := expected.DeepCopy()
+			actual.Spec.Template.Spec.ServiceAccountName = tc.account
+			actual.Spec.Template.Spec.DeprecatedServiceAccount = tc.alias
+			if got := retentionJobMatches(expected, actual); got != tc.matches {
+				t.Errorf("Job match = %v, want %v", got, tc.matches)
+			}
+			expected.Spec.Template.Spec.DeprecatedServiceAccount = "default"
+			pod := &v1.Pod{Spec: *actual.Spec.Template.Spec.DeepCopy()}
+			if got := retentionPodMatches(expected, pod); got != tc.matches {
+				t.Errorf("Pod match = %v, want %v", got, tc.matches)
+			}
+		})
 	}
 }
 

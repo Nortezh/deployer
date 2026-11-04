@@ -261,6 +261,9 @@ func retentionJobMatches(expected, actual *batchv1.Job) bool {
 }
 
 func normalizeRetentionPod(p *v1.PodSpec) {
+	if p.DeprecatedServiceAccount == p.ServiceAccountName {
+		p.DeprecatedServiceAccount = ""
+	}
 	if p.TerminationGracePeriodSeconds != nil && *p.TerminationGracePeriodSeconds == 30 {
 		p.TerminationGracePeriodSeconds = nil
 	}
@@ -283,8 +286,6 @@ func retentionPodMatches(job *batchv1.Job, pod *v1.Pod) bool {
 	if spec.Priority != nil && *spec.Priority == 0 && spec.PriorityClassName == "" {
 		spec.Priority = nil
 	}
-	spec.DeprecatedServiceAccount = ""
-	want.DeprecatedServiceAccount = ""
 	spec.Tolerations = nil
 	want.Tolerations = nil
 	normalizeRetentionPod(spec)
