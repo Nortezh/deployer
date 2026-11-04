@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Nortezh/api"
 	"github.com/deploys-app/deployer/k8s"
@@ -25,6 +26,7 @@ type backupFixture struct {
 	mu                     sync.Mutex
 	cluster, store, backup map[string]any
 	app                    *v1.Secret
+	credentials            *v1.Secret
 	appReads               int
 	changeApp              func(*v1.Secret)
 	lastRequest            string
@@ -38,13 +40,15 @@ type backupFixture struct {
 
 func newBackupFixture(t *testing.T) (*backupFixture, *k8s.Client, Profile) {
 	t.Helper()
-	p := Profile{AllocationNamespace: "allocator", PortRange: "6100-6199", PVCRetention: "delete", StorageClass: "hostpath", Image: "registry/postgres:17@sha256:" + strings.Repeat("a", 64)}
+	p := Profile{AllocationNamespace: "allocator", PortRange: "6100-6199", PVCRetention: "delete", StorageClass: "hostpath", Image: "registry/postgres:17@sha256:" + strings.Repeat("a", 64), BackupObjectStore: "backup-store", BackupProfileRevision: 1}
+	created := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	f := &backupFixture{cluster: map[string]any{
 		"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster",
 		"metadata": map[string]any{"name": "cnpg-1-2", "namespace": "app-database", "uid": "c1111111-1111-4111-8111-111111111111", "labels": map[string]any{"nortezh.io/database-id": "1"}},
-		"spec": map[string]any{"imageName": p.Image, "storage": map[string]any{"storageClass": p.StorageClass}, "bootstrap": map[string]any{"initdb": map[string]any{"secret": map[string]any{"name": "cnpg-1-2-app"}}},
+		"spec": map[string]any{"imageName": p.Image, "storage": map[string]any{"storageClass": p.StorageClass}, "bootstrap": map[string]any{"initdb": map[string]any{"database": "app", "owner": "app", "secret": map[string]any{"name": "cnpg-1-2-app"}}},
 			"plugins": []any{map[string]any{"name": barmanPlugin, "isWALArchiver": true, "parameters": map[string]any{"barmanObjectName": "backup-store"}}}}},
-		store: map[string]any{"apiVersion": "barmancloud.cnpg.io/v1", "kind": "ObjectStore", "metadata": map[string]any{"name": "backup-store", "uid": "e1111111-1111-4111-8111-111111111111"}, "spec": map[string]any{}},
+		store:       map[string]any{"apiVersion": "barmancloud.cnpg.io/v1", "kind": "ObjectStore", "metadata": map[string]any{"name": "backup-store", "namespace": "app-database", "uid": "e1111111-1111-4111-8111-111111111111", "generation": int64(1), "resourceVersion": "1", "creationTimestamp": created.Format(time.RFC3339)}, "spec": map[string]any{"configuration": map[string]any{"destinationPath": "s3://cnpg-backups/staging", "endpointURL": "http://minio.minio.svc.cluster.local:9000", "s3Credentials": map[string]any{"accessKeyId": map[string]any{"name": "s3-creds", "key": "ACCESS_KEY_ID"}, "secretAccessKey": map[string]any{"name": "s3-creds", "key": "ACCESS_SECRET_KEY"}}}}},
+		credentials: &v1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "s3-creds", Namespace: "app-database", UID: "credential-uid", ResourceVersion: "7", CreationTimestamp: created, ManagedFields: []metav1.ManagedFieldsEntry{{Time: &created, FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:data":{}}`)}}}}, Data: map[string][]byte{"ACCESS_KEY_ID": []byte("fixture-access-key"), "ACCESS_SECRET_KEY": []byte("fixture-secret-key")}},
 		app: &v1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "cnpg-1-2-app", Namespace: "app-database", UID: "source-secret-uid", Labels: map[string]string{"nortezh.io/database-id": "1", "nortezh.io/project-id": "2", "nortezh.io/operation-id": backupCommand().CreateOperationID}},
 			Immutable:  func() *bool { v := true; return &v }(), Type: v1.SecretTypeBasicAuth,
@@ -98,6 +102,8 @@ func newBackupFixture(t *testing.T) (*backupFixture, *k8s.Client, Profile) {
 				return
 			}
 			reply(f.app)
+		case strings.HasSuffix(r.URL.Path, "/secrets/s3-creds"):
+			reply(f.credentials)
 		case strings.HasSuffix(r.URL.Path, "/objectstores/backup-store"):
 			if f.storeNotFound {
 				w.WriteHeader(http.StatusNotFound)

@@ -44,15 +44,12 @@ func ObserveBackupReadiness(ctx context.Context, c *k8s.Client, it *api.Deployer
 	if err != nil || cluster.GetName() != name || cluster.GetNamespace() != ns || cluster.GetUID() == "" || cluster.GetDeletionTimestamp() != nil || cluster.GetLabels()["nortezh.io/database-id"] != strconv.FormatInt(it.ID, 10) || !readinessClusterHealthy(cluster) {
 		return result, nil
 	}
-	if str(cluster, "spec", "imageName") != p.Image || str(cluster, "spec", "storage", "storageClass") != p.StorageClass || str(cluster, "spec", "bootstrap", "initdb", "secret", "name") != name+"-app" {
+	mode := backupBootstrap(cluster, name, p.BackupObjectStore)
+	if str(cluster, "spec", "imageName") != p.Image || str(cluster, "spec", "storage", "storageClass") != p.StorageClass || mode == "" {
 		return result, nil
 	}
 	since, ok := configurationTime(cluster, cluster.GetGeneration() == 1, "f:spec")
 	if !ok || cluster.GetGeneration() < 1 {
-		return result, nil
-	}
-	bootstrap, _, err := unstructured.NestedMap(cluster.Object, "spec", "bootstrap")
-	if err != nil || len(bootstrap) != 1 {
 		return result, nil
 	}
 	if backup, exists, err := unstructured.NestedMap(cluster.Object, "spec", "backup"); err != nil || exists && len(backup) != 0 {
@@ -85,8 +82,8 @@ func ObserveBackupReadiness(ctx context.Context, c *k8s.Client, it *api.Deployer
 			return result, nil
 		}
 	}
-	cfg := &api.DatabaseConfigPostgres{User: string(app.Data["username"]), Password: string(app.Data["password"]), Database: str(cluster, "spec", "bootstrap", "initdb", "database")}
-	if cfg.Database == "" || str(cluster, "spec", "bootstrap", "initdb", "owner") != cfg.User {
+	cfg := &api.DatabaseConfigPostgres{User: string(app.Data["username"]), Password: string(app.Data["password"]), Database: str(cluster, "spec", "bootstrap", mode, "database")}
+	if cfg.Database == "" || str(cluster, "spec", "bootstrap", mode, "owner") != cfg.User {
 		return result, nil
 	}
 	store, err := c.Dynamic().Resource(objectStoreGVR).Namespace(ns).Get(ctx, p.BackupObjectStore, metav1.GetOptions{})

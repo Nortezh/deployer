@@ -9,7 +9,7 @@ and applies those configurations to the cluster.
 The location-configured path is disabled unless `CNPG_ENABLED=true` and a complete
 profile is supplied: allocation namespace/range, digest-pinned PostgreSQL image,
 StorageClass, and `CNPG_PVC_RETENTION=delete`. It shares the KDB port-allocation
-ConfigMap and only supports disposable PVC deletion; production retention is not
+ConfigMap and only supports disposable PVC deletion; production PVC retention is not
 implemented. No location is enabled by this repository change. Do not enable it
 before reviewing endpoint, TLS, RBAC, backend compatibility and cleanup on target.
 
@@ -24,9 +24,10 @@ customer availability and real Operator/SQL acceptance remain gated.
 Restored targets use `bootstrap.recovery`. Guarded deletion supports both initdb
 and recovery targets and retains the same ownership, PVC/PV and port-release checks;
 plugin-enabled backup sources still remain blocked. Cleanup does not delete the
-external recovery source or its ObjectStore. New backups on restored targets are
-unavailable until target WAL archiving and backup lifecycle are supported; the
-Backend rejects admission and reports `backupAvailable=false` for these targets.
+external recovery source or its ObjectStore. Restored targets now support Backup
+and daily admission after their Restore completes and their own backup readiness is
+verified. They use a distinct archive server prefix and independent retention set;
+unready or unsupported targets remain unavailable.
 
 ## Creation-time Barman binding
 
@@ -35,7 +36,8 @@ profile has a positive revision and the referenced ObjectStore/credential metada
 passes the existing supported-profile preflight. The WAL archiver is
 `barman-cloud.cloudnative-pg.io`, with `barmanObjectName` from the location profile and
 `serverName` equal to the immutable Cluster name (`cnpg-<database ID>-<project ID>`).
-The Worker does not create or modify an ObjectStore, credentials, IAM or retention.
+The Worker does not create or modify an ObjectStore, credentials, IAM or the
+ObjectStore's retention policy.
 
 Missing/incomplete/unsupported/unreadable backup prerequisites create an ordinary
 Cluster without the plugin; they do not prevent database provisioning. Creation-time
@@ -53,8 +55,9 @@ become available; a retry is not backfill.
 Restored targets keep their selected recovery source in `externalClusters` and receive
 a distinct target WAL archive binding under the same creation-only policy. A historical
 source archive name equal to the target's immutable name suppresses target archiving
-rather than reusing that prefix; recovery remains bound to the selected source. This
-is target manifest support, not restored-source backup admission/verification support.
+rather than reusing that prefix; recovery remains bound to the selected source.
+Backup/readiness validation supports recovery bootstrap with the target's own immutable
+Secret, the same supported ObjectStore and a source server distinct from the target.
 
 Enabling a profile starts continuous WAL archiving on new ordinary/restored databases,
 even before a manual backup; cap7 is not a WAL-byte bound. **Existing deletion guards
@@ -62,10 +65,35 @@ still block plugin-enabled databases**, even without a successful backup. Scoped
 archive cleanup/target-environment acceptance remains separately gated; this change is not rollout
 or destructive-cleanup approval and does not remediate the existing `cpng` incident.
 
-## Manual Backup target
+## Daily Backup and count retention
 
-New manual Backup resources explicitly use `spec.target: primary`. On the pinned
-PostgreSQL16/Barman3.20.1 path, stock `pg_backup_stop()` switches WAL and waits for
+Backend command polling admits daily Backups at 02:00 `Asia/Bangkok`, with one retry
+five minutes after a definitive failure. Unknown/running attempts reconcile the same
+operation; missed slots coalesce into one latest-slot catch-up. Manual and daily
+successes share the same latest-seven retention set.
+
+A successful replacement may temporarily bring the retained count to eight. Backend
+persists the exact retention intent; the Worker reconciles one deterministic Job using
+the pinned stock Barman image, with delete init and catalog main containers. Unresolved
+retention blocks conflicting Backup/Restore/deletion. Completion requires matching
+Job/Pod identity, terminal execution, empty delete logs and the exact retained-seven
+catalog. Unknown or blocked cleanup does not authorize another deletion Job.
+
+Availability is separate from immutable Backup execution history. Expiration does not
+turn a successful Backup into a failure; Backend Restore admission and dispatch reject
+unavailable selections. Historical unbound material is not automatically enrolled in
+rotation. Count convergence is not proof of physical WAL erasure or backup integrity.
+
+This path has local SDK/Backend and fake-Kubernetes test evidence only. The SDK contract
+is unpublished, consumer pins are unchanged, and Console integration remains pending.
+Actual stock-image/CLI/log behavior, provider 8→7 and surviving selected Restore,
+credentials/RBAC/IAM, migration, publication and rollout require separate acceptance
+and authorization. Keep runtime gates closed.
+
+## Backup target
+
+New manual and daily Backup resources explicitly use `spec.target: primary`. On the
+pinned PostgreSQL16/Barman3.20.1 path, stock `pg_backup_stop()` switches WAL and waits for
 archival on the primary. The previous standby path with `archive_mode=on` does not
 provide that wait. This trades extra primary I/O for the stock completion behavior;
 there is no new poller, WAL-switch query, permission or SDK/Backend field.
@@ -95,17 +123,18 @@ Backup/Restore operation or release its guard. Backend owns expiry and expected
 profile/hash/ObjectStore identity. The existing Backend `0032.sql` migration/profile
 configuration requires separate owner approval before use on an existing environment.
 
-The supported observation is an ordinary initdb source with the owned immutable
-bootstrap Secret, HA2/Ready/ContinuousArchiving success, loaded plugin `0.15.1`, and a
-running owned primary with the profile PostgreSQL image and the pinned Barman sidecar
+The supported observation is an ordinary initdb or supported recovery-bootstrap source
+with its own immutable bootstrap Secret, HA2/Ready/ContinuousArchiving success, loaded
+plugin `0.15.1`, and a running owned primary with the profile PostgreSQL image and
+the pinned Barman sidecar
 from the recorded `0.15.1` manifest. The archiver can be a regular container or a
 restartable init container (`restartPolicy: Always`); its corresponding status must
 be running and ready. One-shot init containers and conflicting layouts are rejected.
 S3 configuration must use an explicit endpoint and
 `accessKeyId`/`secretAccessKey` name/key Secret selectors. Optional compression is gzip;
 positive WAL `maxParallel`, data `jobs` and boolean `immediateCheckpoint` are supported.
-Automatic retention, other providers/credential modes, endpoint CA overrides, custom
-sidecar env/args/resources and nondefault sidecar settings fail closed rather than
+ObjectStore automatic retention, other providers/credential modes, endpoint CA overrides,
+custom sidecar env/args/resources and nondefault sidecar settings fail closed rather than
 being guessed compatible. This is not R2 compatibility or production acceptance.
 
 Verification makes Kubernetes GETs only. It reads the existing owned allocation/LB
@@ -150,8 +179,9 @@ Stock Backup `completed`/catalog `DONE` can precede archival of its still-open t
 object checks established required end-WAL persistence before Restore; this does not
 prove immediate restore-after-DONE or change product completion semantics. The verifier
 never switches WAL. The whole isolated fixture/private credentials were removed; this
-is not product archive-cleanup proof. Explicit administrator backfill, restored-source
-backups, native failure injection, target-environment/R2 acceptance and safe archive
+is not product archive-cleanup proof or native acceptance of the new daily/retention
+path. Explicit administrator backfill, native restored-source Backup/retention and
+failure-injection checks, target-environment/R2 acceptance and safe whole-archive
 deletion remain separate follow-ups.
 
 The isolated local spike remains behind `LOCAL=true` and
