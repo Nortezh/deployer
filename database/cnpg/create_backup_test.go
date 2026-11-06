@@ -14,18 +14,22 @@ import (
 
 	"github.com/Nortezh/api"
 	"github.com/deploys-app/deployer/k8s"
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	"io"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/rest"
 )
 
 type backupCreateFixture struct {
-	mu                                            sync.Mutex
-	profile                                       *readinessFixture
-	command                                       *api.DeployerCommandCNPGCreate
-	objects                                       map[string]map[string]any
-	clusterCreates, otherWrites, storeReads       int
-	storeMissing, storeDenied, loseCreateResponse bool
+	mu                                               sync.Mutex
+	profile                                          *readinessFixture
+	command                                          *api.DeployerCommandCNPGCreate
+	objects                                          map[string]map[string]any
+	clusterCreates, otherWrites, storeReads, patches int
+	losePatchResponse, denyPatch                     bool
+	storeMissing, storeDenied, loseCreateResponse    bool
 }
 
 // Tests the shared create/render boundary; Kubernetes and SQL remain synthetic.
@@ -47,6 +51,41 @@ func newBackupCreateFixture(t *testing.T, command *api.DeployerCommandCNPGCreate
 			w.WriteHeader(code)
 			reply(map[string]any{"apiVersion": "v1", "kind": "Status", "code": code, "reason": reason})
 		}
+		if r.Method == http.MethodPatch {
+			f.patches++
+			if f.denyPatch {
+				status(403, "Forbidden")
+				return
+			}
+			object := f.objects[r.URL.Path]
+			if object == nil {
+				status(404, "NotFound")
+				return
+			}
+			before, _ := json.Marshal(object)
+			body, _ := io.ReadAll(r.Body)
+			patch, err := jsonpatch.DecodePatch(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, err := patch.Apply(before)
+			if err != nil {
+				status(409, "Conflict")
+				return
+			}
+			if err := json.Unmarshal(after, &object); err != nil {
+				t.Fatal(err)
+			}
+			object["metadata"].(map[string]any)["generation"] = float64(2)
+			f.objects[r.URL.Path] = object
+			if f.losePatchResponse {
+				f.losePatchResponse = false
+				status(504, "Timeout")
+				return
+			}
+			reply(object)
+			return
+		}
 		if r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/clusters") || strings.HasSuffix(r.URL.Path, "/ingressroutetcps")) {
 			var object map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&object); err != nil {
@@ -62,6 +101,10 @@ func newBackupCreateFixture(t *testing.T, command *api.DeployerCommandCNPGCreate
 			}
 			if object["kind"] == "Cluster" {
 				f.clusterCreates++
+				metadata["uid"], metadata["resourceVersion"], metadata["generation"] = "c1111111-1111-4111-8111-111111111111", "1", int64(1)
+				if plugins, _, _ := unstructured.NestedSlice(object, "spec", "plugins"); len(plugins) != 0 {
+					t.Error("archiver enabled before actual UID binding")
+				}
 				object["status"] = map[string]any{"phase": "Setting up primary", "readyInstances": int64(1), "currentPrimary": name + "-1"}
 			}
 			f.objects[key] = object
@@ -80,6 +123,14 @@ func newBackupCreateFixture(t *testing.T, command *api.DeployerCommandCNPGCreate
 			return
 		}
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/clusters"):
+			items := []any{}
+			for path, obj := range f.objects {
+				if strings.Contains(path, "/clusters/") {
+					items = append(items, obj)
+				}
+			}
+			reply(map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "ClusterList", "items": items})
 		case strings.HasSuffix(r.URL.Path, "/nodes"):
 			reply(&v1.NodeList{Items: []v1.Node{*profile.node}})
 		case strings.HasSuffix(r.URL.Path, "/configmaps/"+allocationMap):
@@ -118,7 +169,7 @@ func newBackupCreateFixture(t *testing.T, command *api.DeployerCommandCNPGCreate
 	}))
 	t.Cleanup(server.Close)
 	t.Setenv("KUBE_PROXY_URL", server.URL)
-	c, err := k8s.NewLocalClient("app")
+	c, err := k8s.NewClientForConfig("app", &rest.Config{Host: server.URL, QPS: 10000, Burst: 10000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,24 +189,31 @@ func TestCreateBarmanBindingAndLostResponseRetry(t *testing.T) {
 	if _, _, ready, err := ApplyCreate(context.Background(), c, it, p); err == nil || ready {
 		t.Fatal("lost response was treated as confirmed creation")
 	}
+	if plugins, _, _ := unstructured.NestedSlice(f.cluster().Object, "spec", "plugins"); len(plugins) != 0 {
+		t.Fatal("lost-create response enabled unbound archiving")
+	}
+	f.losePatchResponse = true
+	if _, _, ready, err := ApplyCreate(context.Background(), c, it, p); err == nil || ready {
+		t.Fatal("lost activation ACK was treated as confirmed")
+	}
 	plugins, _, err := unstructured.NestedSlice(f.cluster().Object, "spec", "plugins")
-	want := []any{map[string]any{"name": barmanPlugin, "enabled": true, "isWALArchiver": true, "parameters": map[string]any{"barmanObjectName": "backup-store", "serverName": "cnpg-1-2"}}}
-	if err != nil || !reflect.DeepEqual(plugins, want) {
-		t.Fatal("new Cluster missing its location-owned Barman binding")
+	var binding archiveBinding
+	if json.Unmarshal([]byte(f.cluster().GetAnnotations()[archiveBindingAnnotation]), &binding) != nil || binding.ClusterUID != string(f.cluster().GetUID()) || binding.CreateOperationID != it.OperationID || err != nil || !reflect.DeepEqual(plugins, archivePlugins(&binding)) {
+		t.Fatal("archiver and actual UID binding were not committed together")
 	}
 	before, _ := json.Marshal(f.cluster().Object)
-	reads := f.storeReads
-	// Optional backup outages/reconfiguration cannot rewrite the committed root.
-	f.storeDenied = true
-	p.BackupProfileRevision = 0
 	for range 2 {
 		if _, _, ready, err := ApplyCreate(context.Background(), c, it, p); err != nil || ready {
-			t.Fatal("retry did not reconcile the same pending root", err)
+			t.Fatal("retry did not reconcile the same bound root", err)
 		}
 	}
 	after, _ := json.Marshal(f.cluster().Object)
-	if string(before) != string(after) || f.clusterCreates != 1 || f.otherWrites != 0 || f.storeReads != reads {
-		t.Fatal("retry changed/recreated the Cluster or re-evaluated backup provisioning")
+	if string(before) != string(after) || f.clusterCreates != 1 || f.otherWrites != 0 || f.patches != 1 {
+		t.Fatal("retry changed/recreated/rebound the Cluster")
+	}
+	f.storeDenied = true
+	if _, _, ready, err := ApplyCreate(context.Background(), c, it, p); err == nil || ready {
+		t.Fatal("lost required profile observation accepted")
 	}
 	for _, secret := range []string{bootstrapPassword, "fixture-access-key", "fixture-secret-key"} {
 		if strings.Contains(string(after), secret) {
@@ -230,7 +288,7 @@ func TestRestoreCreationSeparatesArchiveFromSelectedSource(t *testing.T) {
 			cfg := &api.DeployerCommandDatabaseCreate{ID: it.ID, ProjectID: it.ProjectID, Name: "cnpg-3", Type: api.DatabaseTypePostgres, Provider: api.DatabaseProviderCNPG, StorageSize: it.StorageSize, Resources: it.Resources, PostgresConfig: &api.DatabaseConfigPostgres{User: "app", Password: bootstrapPassword, Database: "app"}}
 			// Shared rendering only; public ApplyRestore still validates the selected
 			// source/backup and fresh target credentials before reaching this seam.
-			if _, _, ready, err := apply(context.Background(), c, cfg, p, recovery); err != nil || ready {
+			if _, _, ready, err := apply(context.Background(), c, cfg, p, recovery, it); err != nil || ready {
 				t.Fatal("recovery rendering failed", err)
 			}
 			external, _, err := unstructured.NestedSlice(f.cluster().Object, "spec", "externalClusters")
@@ -239,7 +297,7 @@ func TestRestoreCreationSeparatesArchiveFromSelectedSource(t *testing.T) {
 				t.Fatal("selected recovery source/backup was changed")
 			}
 			plugins, exists, err := unstructured.NestedSlice(f.cluster().Object, "spec", "plugins")
-			if mode == "source prefix collision" {
+			if mode == "source prefix collision" || mode == "different store" {
 				if exists || err != nil {
 					t.Fatal("target archive reused the selected source prefix")
 				}

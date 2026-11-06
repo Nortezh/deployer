@@ -6,12 +6,14 @@ import (
 	"errors"
 	"github.com/Nortezh/api"
 	"github.com/deploys-app/deployer/k8s"
+	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,6 +34,9 @@ type deleteNode struct {
 	BootID string
 }
 type deleteInventory struct {
+	RootSpecHash                                      string
+	Binding                                           archiveBinding
+	Executors                                         []deleteExecutor
 	Command                                           api.DeployerCommandCNPGDelete
 	Objects                                           []deleteObject
 	Nodes                                             map[string]deleteNode
@@ -61,7 +66,13 @@ func deleteOptions(o metav1.Object) metav1.DeleteOptions {
 
 // ApplyDelete retires managed resources, not disconnected-node processes or forensic copies.
 // The immutable inventory survives retries and remains a non-secret retirement marker.
-func ApplyDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPGDelete, p Profile) (bool, error) {
+func ApplyDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPGDelete, p Profile) (done bool, retErr error) {
+	stage := api.CNPGDeleteScope
+	defer func() {
+		if retErr != nil {
+			retErr = &deleteStageError{stage: stage}
+		}
+	}()
 	if c == nil || it == nil || it.Valid() != nil || p.AllocationNamespace == "" || p.PVCRetention != "delete" || p.StorageClass == "" {
 		return false, errDeleteBlocked
 	}
@@ -83,7 +94,7 @@ func ApplyDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPG
 			cm, err = maps.Get(ctx, retirementName(name), metav1.GetOptions{})
 		}
 	}
-	if err != nil || cm == nil || cm.UID == "" || cm.DeletionTimestamp != nil || cm.Immutable == nil || !*cm.Immutable || len(cm.OwnerReferences) != 0 || len(cm.Data) != 1 {
+	if err != nil || cm == nil || cm.UID == "" || cm.DeletionTimestamp != nil || cm.Immutable == nil || !*cm.Immutable || len(cm.OwnerReferences) != 0 || len(cm.Data) != 1 || len(cm.BinaryData) != 0 {
 		return false, errDeleteBlocked
 	}
 	var inv deleteInventory
@@ -93,9 +104,65 @@ func ApplyDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPG
 	if err := checkDeleteProfile(ctx, c, p, &inv); err != nil {
 		return false, errDeleteBlocked
 	}
-	// Recheck all standard dependents each poll, including terminating Pods and Jobs.
+	progress, err := readDeleteProgress(cm, &inv)
+	if err != nil {
+		return false, errDeleteBlocked
+	}
+	stage = api.CNPGDeleteWriters
+	if progress.Stage == "" || progress.Stage == "stopping" {
+		if it.Phase != api.CNPGDeleteResources {
+			return false, errDeleteBlocked
+		}
+		stopped, err := stopDeleteWriters(ctx, c, it, p, cm, &inv, progress)
+		if err != nil || !stopped {
+			return false, err
+		}
+		cm, err = maps.Get(ctx, cm.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, errDeleteBlocked
+		}
+		progress, err = readDeleteProgress(cm, &inv)
+		if err != nil {
+			return false, errDeleteBlocked
+		}
+	}
 	if err := checkDeleteDependents(ctx, c, name, &inv); err != nil {
 		return false, errDeleteBlocked
+	}
+	stage = api.CNPGDeleteArchives
+	if err := validateDeleteArchive(ctx, c, p, &inv); err != nil {
+		return false, err
+	}
+	if progress.Stage == "stopped" {
+		if it.Phase != api.CNPGDeleteResources || verifyDeleteStopped(ctx, c, &inv) != nil {
+			return false, errDeleteBlocked
+		}
+		if err := purgeDeleteArchive(ctx, c, p, &inv); err != nil {
+			return false, err
+		}
+		if checkDeleteProfile(ctx, c, p, &inv) != nil || checkDeleteDependents(ctx, c, name, &inv) != nil || verifyDeleteStopped(ctx, c, &inv) != nil {
+			return false, errDeleteBlocked
+		}
+		progress.Stage = "archives"
+		if err := saveDeleteProgress(ctx, c, cm, &inv, progress); err != nil {
+			return false, err
+		}
+	}
+	if progress.Stage != "archives" && progress.Stage != "resources" {
+		return false, errDeleteBlocked
+	}
+	stage = api.CNPGDeleteResources
+	root, err := deleteRoot(ctx, c, &inv)
+	if err != nil || root != nil && verifyDeleteStopped(ctx, c, &inv, true) != nil {
+		return false, errDeleteBlocked
+	}
+	for _, obj := range inv.Objects {
+		if obj.Kind == "Backup" {
+			absent, err := retireObject(ctx, c, obj, it, it.Phase == api.CNPGDeleteResources)
+			if err != nil || !absent {
+				return false, err
+			}
+		}
 	}
 	for _, obj := range inv.Objects {
 		absent, err := retireObject(ctx, c, obj, it, it.Phase == api.CNPGDeleteResources)
@@ -109,8 +176,18 @@ func ApplyDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPG
 	if err := checkDeleteDependents(ctx, c, name, &inv); err != nil {
 		return false, errDeleteBlocked
 	}
+	if progress.Stage == "archives" {
+		progress.Stage = "resources"
+		if err := saveDeleteProgress(ctx, c, cm, &inv, progress); err != nil {
+			return false, err
+		}
+	}
 	if it.Phase == api.CNPGDeleteResources {
 		return true, nil
+	}
+	stage = api.CNPGDeleteFinalize
+	if !reflect.DeepEqual(it.Receipt, deleteReceipt(cm, &inv)) {
+		return false, errDeleteBlocked
 	}
 	// Backend emits finalize only after every Secret target's current deletion ACK.
 	// Independently check the local key/marker, then release only the captured port.
@@ -138,7 +215,8 @@ func ApplyDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPG
 func inventoryMatches(inv *deleteInventory, it *api.DeployerCommandCNPGDelete) bool {
 	expected := *it
 	expected.Phase = api.CNPGDeleteResources
-	if inv.Command != expected || len(inv.Nodes) == 0 || inv.AllocationKey == "" || inv.StorageClassUID == "" || inv.AllocationMapUID == "" {
+	expected.Receipt = nil
+	if !reflect.DeepEqual(inv.Command, expected) || len(inv.Nodes) == 0 || inv.AllocationKey == "" || inv.StorageClassUID == "" || inv.AllocationMapUID == "" {
 		return false
 	}
 	if inv.StorageDriver == "" {
@@ -148,10 +226,10 @@ func inventoryMatches(inv *deleteInventory, it *api.DeployerCommandCNPGDelete) b
 	} else if inv.StorageDriver != longhornDriver || inv.ProvisionerUID != "" || inv.StorageClassName == "" || len(inv.CSIHandles) != 2 {
 		return false
 	}
-	if len(inv.Objects) < 3 || inv.Objects[0].Kind != "Cluster" || inv.Objects[0].Name != deleteName(it) {
+	if len(inv.Objects) < 3 || inv.Objects[0].Kind != "Cluster" || inv.Objects[0].Name != deleteName(it) || !deleteBindingMatches(inv, it) || len(inv.Executors) == 0 || len(inv.Executors) > 2 {
 		return false
 	}
-	allowed := map[string]bool{"Cluster": true, "Route": true, "Bootstrap": true, "PVC": true, "PV": true, "Pod": true, "Job": true, "Service": true, "Secret": true}
+	allowed := map[string]bool{"Cluster": true, "Route": true, "Bootstrap": true, "PVC": true, "PV": true, "Pod": true, "Job": true, "Service": true, "Secret": true, "Backup": true}
 	kinds := map[string]bool{}
 	seen := map[string]bool{}
 	uids := map[types.UID]bool{}
@@ -171,7 +249,7 @@ func inventoryMatches(inv *deleteInventory, it *api.DeployerCommandCNPGDelete) b
 		}
 		handles[handle] = true
 	}
-	return seen["Route/"+deleteName(it)] && seen["Bootstrap/"+deleteName(it)+"-app"] && kinds["PVC"] && kinds["PV"]
+	return seen["Route/"+deleteName(it)] && seen["Bootstrap/"+deleteName(it)+"-app"] && kinds["PVC"] && kinds["PV"] && validDeleteExecutors(inv)
 }
 
 func captureDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPGDelete, p Profile) (*deleteInventory, error) {
@@ -206,9 +284,13 @@ func captureDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCN
 	}
 	backup, backupSet, backupErr := unstructured.NestedMap(cluster.Object, "spec", "backup")
 	plugins, pluginsSet, pluginsErr := unstructured.NestedSlice(cluster.Object, "spec", "plugins")
-	if backupErr != nil || pluginsErr != nil || (backupSet && len(backup) > 0) || (pluginsSet && len(plugins) > 0) {
+	if backupErr != nil || pluginsErr != nil || (backupSet && len(backup) > 0) || !pluginsSet || len(plugins) != 1 {
 		return nil, errDeleteBlocked
 	}
+	if cluster.GetAnnotations()["cnpg.io/hibernation"] == "on" {
+		return nil, errDeleteBlocked
+	}
+	inv.RootSpecHash = deleteRootSpecHash(cluster)
 	inv.Objects = append(inv.Objects, deleteObject{"Cluster", name, cluster.GetUID()})
 	route, err := c.Dynamic().Resource(routeGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
 	if err != nil || route.GetUID() == "" || route.GetDeletionTimestamp() != nil || route.GetLabels()["nortezh.io/database-id"] != strconv.FormatInt(it.ID, 10) {
@@ -225,6 +307,12 @@ func captureDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCN
 		}
 	}
 	inv.Objects = append(inv.Objects, deleteObject{"Bootstrap", app.Name, app.UID})
+	if backupBootstrap(cluster, name, p.BackupObjectStore) == "" || json.Unmarshal([]byte(cluster.GetAnnotations()[archiveBindingAnnotation]), &inv.Binding) != nil || !deleteBindingMatches(inv, it) || validateDeleteArchive(ctx, c, p, inv) != nil || !reflect.DeepEqual(plugins, archivePlugins(&inv.Binding)) {
+		return nil, errDeleteBlocked
+	}
+	if err := captureDeleteBackups(ctx, c, cluster, inv); err != nil {
+		return nil, err
+	}
 	pvcs, err := c.Core().CoreV1().PersistentVolumeClaims(ns).List(ctx, metav1.ListOptions{LabelSelector: "cnpg.io/cluster=" + name})
 	if err != nil || len(pvcs.Items) != 2 {
 		return nil, errDeleteBlocked
@@ -266,7 +354,7 @@ func captureDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCN
 	}
 	jobUIDs := map[types.UID]bool{}
 	for _, job := range jobs.Items {
-		if job.UID == "" || !ownerUID(&job, cluster.GetUID()) {
+		if job.UID == "" || job.DeletionTimestamp != nil || !ownerUID(&job, cluster.GetUID()) || !terminalDeleteJob(&job) {
 			return nil, errDeleteBlocked
 		}
 		jobUIDs[job.UID] = true
@@ -279,6 +367,17 @@ func captureDelete(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCN
 		}
 		if !owned || pod.UID == "" || pod.Spec.NodeName == "" {
 			return nil, errDeleteBlocked
+		}
+		instance := false
+		for _, container := range pod.Spec.Containers {
+			instance = instance || container.Name == "postgres"
+		}
+		if instance || !terminalDeletePod(&pod) {
+			executor, err := captureDeleteExecutor(&pod, inv)
+			if err != nil {
+				return nil, err
+			}
+			inv.Executors = append(inv.Executors, *executor)
 		}
 		inv.Objects = append(inv.Objects, deleteObject{"Pod", pod.Name, pod.UID})
 		inv.Nodes[pod.Spec.NodeName] = deleteNode{}
@@ -383,6 +482,14 @@ func deletePVSourceMatches(pv *v1.PersistentVolume, driver, handle string) bool 
 	return driver == "" && pv.Spec.StorageClassName == "local-path" && (pv.Spec.HostPath != nil || (pv.Spec.Local != nil && pv.Spec.Local.Path != ""))
 }
 
+func terminalDeleteJob(job *batchv1.Job) bool {
+	terminal := false
+	for _, condition := range job.Status.Conditions {
+		terminal = terminal || condition.Status == v1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed)
+	}
+	return terminal && job.Status.Active == 0 && (job.Status.Terminating == nil || *job.Status.Terminating == 0) && (job.Status.UncountedTerminatedPods == nil || len(job.Status.UncountedTerminatedPods.Succeeded) == 0 && len(job.Status.UncountedTerminatedPods.Failed) == 0)
+}
+
 func deleteNodeReady(n *v1.Node) bool {
 	if n == nil || n.UID == "" || n.DeletionTimestamp != nil || n.Status.NodeInfo.BootID == "" || !strings.HasPrefix(n.Status.NodeInfo.KubeletVersion, "v1.") {
 		return false
@@ -436,14 +543,16 @@ func checkDeleteProfile(ctx context.Context, c *k8s.Client, p Profile, inv *dele
 			cluster, _, _ := unstructured.NestedString(obj.Object, "spec", "cluster", "name")
 			rootUID := inv.Objects[0].UID
 			if cluster == deleteName(&inv.Command) || ownerUID(&obj, rootUID) {
-				return errDeleteBlocked
+				if resource != "backups" || !knownDeleteBackup(&obj, inv) {
+					return errDeleteBlocked
+				}
 			}
 		}
 	}
 	return nil
 }
 
-func checkDeleteDependents(ctx context.Context, c *k8s.Client, name string, inv *deleteInventory) error {
+func checkDeleteDependents(ctx context.Context, c *k8s.Client, name string, inv *deleteInventory, stopping ...bool) error {
 	known := map[types.UID]bool{}
 	claims := map[string]bool{}
 	var root types.UID
@@ -472,7 +581,13 @@ func checkDeleteDependents(ctx context.Context, c *k8s.Client, name string, inv 
 				relevant = true
 			}
 		}
-		if relevant && (!known[pod.UID] || pod.DeletionTimestamp != nil) {
+		allowTermination := false
+		if len(stopping) == 1 && stopping[0] {
+			for _, executor := range inv.Executors {
+				allowTermination = allowTermination || executor.UID == pod.UID && executorMatches(&pod, &executor, false)
+			}
+		}
+		if relevant && (!known[pod.UID] || pod.DeletionTimestamp != nil && !allowTermination) {
 			return errDeleteBlocked
 		}
 	}
@@ -508,7 +623,7 @@ func checkDeleteDependents(ctx context.Context, c *k8s.Client, name string, inv 
 		return errDeleteBlocked
 	}
 	for _, job := range jobs.Items {
-		if (job.Labels["cnpg.io/cluster"] == name || ownerUID(&job, root)) && !known[job.UID] {
+		if (job.Labels["cnpg.io/cluster"] == name || ownerUID(&job, root)) && (!known[job.UID] || !terminalDeleteJob(&job)) {
 			return errDeleteBlocked
 		}
 	}
@@ -569,6 +684,8 @@ func retireObject(ctx context.Context, c *k8s.Client, obj deleteObject, it *api.
 	switch obj.Kind {
 	case "Cluster":
 		o, err = c.Dynamic().Resource(clusterGVR).Namespace(ns).Get(ctx, obj.Name, metav1.GetOptions{})
+	case "Backup":
+		o, err = c.Dynamic().Resource(backupGVR).Namespace(ns).Get(ctx, obj.Name, metav1.GetOptions{})
 	case "Route":
 		o, err = c.Dynamic().Resource(routeGVR).Namespace(ns).Get(ctx, obj.Name, metav1.GetOptions{})
 	case "Bootstrap", "Secret":
@@ -605,11 +722,13 @@ func retireObject(ctx context.Context, c *k8s.Client, obj deleteObject, it *api.
 		}
 	}
 	// Only roots and the bootstrap/route are explicitly deleted. Stock GC/reclaim owns children/PVs.
-	if !remove || o.GetDeletionTimestamp() != nil || (obj.Kind != "Cluster" && obj.Kind != "Route" && obj.Kind != "Bootstrap") {
+	if !remove || o.GetDeletionTimestamp() != nil || (obj.Kind != "Cluster" && obj.Kind != "Route" && obj.Kind != "Bootstrap" && obj.Kind != "Backup") {
 		return false, nil
 	}
 	opts := deleteOptions(o)
 	switch obj.Kind {
+	case "Backup":
+		err = c.Dynamic().Resource(backupGVR).Namespace(ns).Delete(ctx, obj.Name, opts)
 	case "Cluster":
 		err = c.Dynamic().Resource(clusterGVR).Namespace(ns).Delete(ctx, obj.Name, opts)
 	case "Route":

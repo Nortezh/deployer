@@ -23,27 +23,7 @@ func NewClient(namespace string) (*Client, error) {
 		return nil, err
 	}
 
-	client, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, err
-	}
-
-	certManagerClient, err := certmanager.NewForConfig(config)
-	if err != nil {
-		return nil, err
-	}
-
-	dyn, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Client{
-		client:            client,
-		certManagerClient: certManagerClient,
-		dynamic:           dyn,
-		namespace:         namespace,
-	}, nil
+	return NewClientForConfig(namespace, config)
 }
 
 func NewLocalClient(namespace string) (*Client, error) {
@@ -55,7 +35,11 @@ func NewLocalClient(namespace string) (*Client, error) {
 		Host:    host,
 		APIPath: "/",
 	}
+	return NewClientForConfig(namespace, config)
+}
 
+// NewClientForConfig shares native client configuration without changing runtime defaults.
+func NewClientForConfig(namespace string, config *rest.Config) (*Client, error) {
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, err

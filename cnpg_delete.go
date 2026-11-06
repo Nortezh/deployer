@@ -30,10 +30,24 @@ func (w *Worker) cnpgDelete(ctx context.Context, it *api.DeployerCommandCNPGDele
 	if err == nil && !absent {
 		return
 	}
-	result := &api.DeployerSetResultCNPGDelete{DeployerCommandCNPGIdentity: it.DeployerCommandCNPGIdentity, Phase: it.Phase, ResourceAbsent: absent}
+	result := &api.DeployerSetResultCNPGDelete{DeployerCommandCNPGIdentity: it.DeployerCommandCNPGIdentity, Phase: it.Phase, ResourceAbsent: absent,
+		CreateOperationID: it.CreateOperationID, SecretID: it.SecretID, SecretRevision: it.SecretRevision}
+	if absent {
+		result.Receipt, err = cnpg.DeleteReceipt(ctx, w.Client, it)
+	}
+	if it.Phase == api.CNPGDeleteFinalize {
+		result.Receipt = it.Receipt
+	}
 	if err != nil {
 		result.ResourceAbsent = false
 		result.FailureCode = api.CNPGFailureCleanup
+		result.FailureStage = cnpg.DeleteFailureStage(err)
+		if it.Phase == api.CNPGDeleteFinalize {
+			result.FailureStage = api.CNPGDeleteFinalize
+		}
+	}
+	if result.Valid() != nil {
+		return
 	}
 	w.results = append(w.results, &api.DeployerSetResultItem{CNPGDelete: result})
 }

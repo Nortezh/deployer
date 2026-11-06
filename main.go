@@ -146,12 +146,13 @@ func main() {
 	// currently supports only explicit disposable PVC deletion, not production retention.
 	if cfg.Bool("cnpg_enabled") {
 		w.CNPG = cnpg.Profile{
-			AllocationNamespace: cfg.String("cnpg_allocation_namespace"),
-			PortRange:           cfg.String("cnpg_port_range"),
-			PVCRetention:        cfg.String("cnpg_pvc_retention"),
-			StorageClass:        cfg.String("cnpg_storage_class"),
-			Image:               cfg.String("cnpg_image"),
-			BackupObjectStore:   cfg.String("cnpg_backup_object_store"),
+			AllocationNamespace:   cfg.String("cnpg_allocation_namespace"),
+			PortRange:             cfg.String("cnpg_port_range"),
+			PVCRetention:          cfg.String("cnpg_pvc_retention"),
+			StorageClass:          cfg.String("cnpg_storage_class"),
+			Image:                 cfg.String("cnpg_image"),
+			BackupObjectStore:     cfg.String("cnpg_backup_object_store"),
+			ArchiveDeleteProvider: cfg.String("cnpg_delete_archive_provider"),
 		}
 		if revision, err := strconv.ParseInt(cfg.String("cnpg_backup_profile_revision"), 10, 64); err == nil {
 			w.CNPG.BackupProfileRevision = revision

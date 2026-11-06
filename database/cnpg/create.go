@@ -25,9 +25,9 @@ func ApplyCreate(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNPG
 		return "", 0, false, errBootstrapUnavailable
 	}
 	// The legacy-shaped value is in-memory only: never persist or send plaintext CNPG wire.
-	return Apply(ctx, c, &api.DeployerCommandDatabaseCreate{
+	return apply(ctx, c, &api.DeployerCommandDatabaseCreate{
 		ID: it.ID, ProjectID: it.ProjectID, Name: "cnpg-" + strconv.FormatInt(it.ID, 10),
 		Type: api.DatabaseTypePostgres, Provider: api.DatabaseProviderCNPG, StorageSize: it.StorageSize, Resources: it.Resources,
 		PostgresConfig: &api.DatabaseConfigPostgres{User: it.Username, Password: string(password), Database: it.Database},
-	}, p)
+	}, p, nil, it)
 }

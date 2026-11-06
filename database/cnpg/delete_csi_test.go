@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func longhornDeleteProfile(f *deleteFixture) Profile {
+func longhornDeleteProfile(t *testing.T, f *deleteFixture) Profile {
 	p := deleteProfile()
 	p.StorageClass = "reviewed-storage"
 	f.objects["/apis/postgresql.cnpg.io/v1/namespaces/app-database/clusters/cnpg-1-2"]["spec"].(map[string]any)["storage"].(map[string]any)["storageClass"] = p.StorageClass
@@ -25,6 +25,7 @@ func longhornDeleteProfile(f *deleteFixture) Profile {
 		spec["storageClassName"] = p.StorageClass
 		spec["csi"] = map[string]any{"driver": longhornDriver, "volumeHandle": "volume-" + suffix}
 	}
+	bindDeleteFixture(t, f, p)
 	return p
 }
 
@@ -32,7 +33,7 @@ func TestCSIDeleteRejectsUnsafeCapture(t *testing.T) {
 	for _, kind := range []string{"driver", "local-pv", "missing-finalizer", "empty-handle", "duplicate-handle", "retained", "class-driver", "binding-mode", "class-denied", "foreign-pv"} {
 		t.Run(kind, func(t *testing.T) {
 			c, f := newDeleteFixture(t)
-			p := longhornDeleteProfile(f)
+			p := longhornDeleteProfile(t, f)
 			pv := f.objects["/api/v1/persistentvolumes/pv-1"]
 			spec := pv["spec"].(map[string]any)
 			class := f.objects["/apis/storage.k8s.io/v1/storageclasses/"+p.StorageClass]
@@ -75,7 +76,7 @@ func TestCSIDeleteBlocksChangedPVOnRetry(t *testing.T) {
 	for _, kind := range []string{"uid", "binding", "handle", "driver", "finalizer", "denied", "duplicate-handle"} {
 		t.Run(kind, func(t *testing.T) {
 			c, f := newDeleteFixture(t)
-			p := longhornDeleteProfile(f)
+			p := longhornDeleteProfile(t, f)
 			it := deleteCommand()
 			if done, err := ApplyDelete(context.Background(), c, it, p); done || err != nil {
 				t.Fatal("capture failed", err)
