@@ -40,7 +40,7 @@ func deleteCommand() *api.DeployerCommandCNPGDelete {
 	return &api.DeployerCommandCNPGDelete{DeployerCommandCNPGIdentity: api.DeployerCommandCNPGIdentity{Version: api.CNPGDeleteVersion, ID: 1, ProjectID: 2, OperationID: "b1111111-1111-4111-8111-111111111111"}, Phase: api.CNPGDeleteResources, SecretID: 3, SecretRevision: 1, CreateOperationID: "a1111111-1111-4111-8111-111111111111"}
 }
 func deleteProfile() Profile {
-	return Profile{ArchiveDeleteProvider: deleteMinIOProfile, BackupObjectStore: "backup-store", BackupProfileRevision: 1, AllocationNamespace: "allocator", PortRange: "6109-6110", PVCRetention: "delete", StorageClass: "local-path", Image: "ghcr.io/cloudnative-pg/postgresql:17.5@sha256:" + strings.Repeat("a", 64)}
+	return Profile{ArchiveDeleteProvider: deleteRustFSProfile, BackupObjectStore: "backup-store", BackupProfileRevision: 1, AllocationNamespace: "allocator", PortRange: "6109-6110", PVCRetention: "delete", StorageClass: "local-path", Image: "ghcr.io/cloudnative-pg/postgresql:17.5@sha256:" + strings.Repeat("a", 64)}
 }
 
 func newDeleteFixture(t *testing.T) (*k8s.Client, *deleteFixture) {

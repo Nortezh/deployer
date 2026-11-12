@@ -19,11 +19,11 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-const deleteMinIOProfile = "minio-native-gc-v1"
+const deleteRustFSProfile = "rustfs-native-gc-v1"
 
 func validateDeleteArchive(ctx context.Context, c *k8s.Client, p Profile, inv *deleteInventory) error {
 	b := &inv.Binding
-	if p.ArchiveDeleteProvider != deleteMinIOProfile || b.Namespace != c.DBNamespace() || p.StorageClass != b.StorageClass || p.BackupObjectStore != b.ObjectStoreName || p.BackupProfileRevision != b.Archive.ProfileRevision {
+	if p.ArchiveDeleteProvider != deleteRustFSProfile || b.Namespace != c.DBNamespace() || p.StorageClass != b.StorageClass || p.BackupObjectStore != b.ObjectStoreName || p.BackupProfileRevision != b.Archive.ProfileRevision {
 		return errDeleteBlocked
 	}
 	store, err := c.Dynamic().Resource(objectStoreGVR).Namespace(c.DBNamespace()).Get(ctx, b.ObjectStoreName, metav1.GetOptions{})
@@ -90,7 +90,7 @@ func archiveAPIError(err error, code string) bool {
 	return errors.As(err, &apiError) && apiError.ErrorCode() == code
 }
 
-// An explicit reviewed MinIO profile is necessary but not sufficient: denied/unknown bucket features block.
+// An explicit reviewed provider profile is necessary but not sufficient: denied/unknown bucket features block.
 func checkDeleteBucket(ctx context.Context, client *s3.Client, bucket string) error {
 	versioning, err := client.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{Bucket: &bucket})
 	if err != nil || versioning == nil || versioning.Status != "" || versioning.MFADelete != "" {

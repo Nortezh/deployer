@@ -48,7 +48,7 @@ func TestDeleteNativeShutdownEvidence(t *testing.T) {
 }
 
 func TestDeleteArchiveProfilesAndPaginationErrors(t *testing.T) {
-	for _, mode := range []string{"versioned", "suspended", "lock", "replication", "denied-versioning", "denied-lock", "denied-replication", "list", "foreign key", "missing token", "per-key", "unsupported profile"} {
+	for _, mode := range []string{"versioned", "suspended", "lock", "replication", "denied-versioning", "denied-lock", "denied-replication", "list", "foreign key", "missing token", "per-key", "unsupported profile", "unsupported rustfs", "retired minio"} {
 		t.Run(mode, func(t *testing.T) {
 			c, f := newDeleteFixture(t)
 			p := deleteProfile()
@@ -74,6 +74,10 @@ func TestDeleteArchiveProfilesAndPaginationErrors(t *testing.T) {
 				f.archive.failure = mode
 			case "unsupported profile":
 				p.ArchiveDeleteProvider = "r2"
+			case "unsupported rustfs":
+				p.ArchiveDeleteProvider = "rustfs"
+			case "retired minio":
+				p.ArchiveDeleteProvider = "minio-native-gc-v1"
 			}
 			done, err := ApplyDelete(context.Background(), c, deleteCommand(), p)
 			if err == nil || done || len(f.deletes) != 0 {
@@ -84,6 +88,33 @@ func TestDeleteArchiveProfilesAndPaginationErrors(t *testing.T) {
 			}
 			if f.archive.objects["staging/source/wals/control"] != "source" || f.archive.objects["staging/cnpg-1-2-neighbor/wals/control"] != "neighbor" {
 				t.Fatal("source/neighbor scope changed")
+			}
+		})
+	}
+}
+
+func TestDeleteRustFSProfileUsesExistingArchiveGuards(t *testing.T) {
+	for _, mode := range []string{"allowed", "versioned", "denied-lock"} {
+		t.Run(mode, func(t *testing.T) {
+			c, f := newDeleteFixture(t)
+			p := deleteProfile()
+			p.ArchiveDeleteProvider = deleteRustFSProfile
+			if mode == "versioned" {
+				f.archive.versioning = "Enabled"
+			}
+			if mode == "denied-lock" {
+				f.archive.denied = "object-lock"
+			}
+			done, err := ApplyDelete(context.Background(), c, deleteCommand(), p)
+			if mode == "allowed" {
+				if err != nil || done || f.stops != 1 {
+					t.Fatal("reviewed RustFS profile did not follow native stop and scoped cleanup", err)
+				}
+			} else if err == nil || done || f.archive.deletes != 0 || len(f.deletes) != 0 {
+				t.Fatal("unsafe RustFS bucket feature advanced deletion", err)
+			}
+			if f.archive.objects["staging/source/wals/control"] != "source" || f.archive.objects["staging/cnpg-1-2-neighbor/wals/control"] != "neighbor" {
+				t.Fatal("source or neighbor scope changed")
 			}
 		})
 	}
