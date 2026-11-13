@@ -91,36 +91,31 @@ func TestR2DeletePartialSameOperation(t *testing.T) {
 	if done, err := ApplyDelete(context.Background(), f.client, deleteCommand(), p); done || err != nil || f.stops != 1 {
 		t.Fatal("same R2 operation did not resume", err)
 	}
+	if f.archive.lifecycleReads != 0 {
+		t.Fatal("R2 retry required lifecycle-read permission")
+	}
 	if f.archive.objects["staging/source/wals/control"] != "source" || f.archive.objects["staging/cnpg-1-2-neighbor/wals/control"] != "neighbor" {
 		t.Fatal("unrelated data changed")
 	}
 }
 
-func TestR2DeleteCalledPathAndLifecycleGuard(t *testing.T) {
-	for _, mode := range []string{"allowed", "denied", "disabled", "foreign", "invalid", "missing", "tagged", "drift", "per-key"} {
+func TestR2DeleteCalledPathWithoutLifecyclePermission(t *testing.T) {
+	for _, mode := range []string{"allowed", "per-key", "list"} {
 		t.Run(mode, func(t *testing.T) {
 			f, p := newR2DeleteFixture(t)
-			if mode == "per-key" {
-				f.archive.failure = "per-key"
-			} else if mode != "allowed" {
-				f.archive.lifecycle = mode
+			if mode != "allowed" {
+				f.archive.failure = mode
 			}
 			done, err := ApplyDelete(context.Background(), f.client, deleteCommand(), p)
 			if mode == "allowed" {
 				if err != nil || done || f.stops != 1 || f.archive.deletes == 0 {
 					t.Fatalf("R2 called path not reached: %v", err)
 				}
-			} else if err == nil || done {
-				t.Fatal("unsafe condition advanced deletion")
+			} else if err == nil || done || len(f.deletes) != 0 {
+				t.Fatal("archive error advanced native retirement")
 			}
-			if mode != "allowed" && mode != "per-key" && mode != "drift" && (f.stops != 0 || f.archive.deletes != 0) {
-				t.Fatal("lifecycle rejected after mutation")
-			}
-			if mode == "drift" && (f.stops != 1 || f.archive.deletes != 0 || len(f.deletes) != 0) {
-				t.Fatal("lifecycle drift advanced object or native retirement")
-			}
-			if mode == "per-key" && len(f.deletes) != 0 {
-				t.Fatal("per-object error advanced native retirement")
+			if f.archive.lifecycleReads != 0 {
+				t.Fatal("R2 Delete required bucket lifecycle-read permission")
 			}
 			if f.archive.objects["staging/source/wals/control"] != "source" || f.archive.objects["staging/cnpg-1-2-neighbor/wals/control"] != "neighbor" {
 				t.Fatal("source or neighbor changed")

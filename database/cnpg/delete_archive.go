@@ -78,12 +78,6 @@ func validateDeleteArchive(ctx context.Context, c *k8s.Client, p Profile, inv *d
 	if !apierrors.IsNotFound(err) && (err != nil || string(app.UID) != b.BootstrapUID) {
 		return errDeleteBlocked
 	}
-	if p.ArchiveDeleteProvider == deleteR2Profile {
-		client, err := archiveDeleteClient(ctx, c, b)
-		if err != nil || checkR2Lifecycle(ctx, client, b.Bucket, b.Prefix) != nil {
-			return errDeleteBlocked
-		}
-	}
 	return nil
 }
 
@@ -126,26 +120,6 @@ func checkDeleteBucket(ctx context.Context, client *s3.Client, bucket string) er
 	return nil
 }
 
-func checkR2Lifecycle(ctx context.Context, client *s3.Client, bucket, prefix string) error {
-	out, err := client.GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{Bucket: &bucket})
-	if err != nil || out == nil {
-		return errDeleteBlocked
-	}
-	for _, rule := range out.Rules {
-		if rule.Status != types.ExpirationStatusEnabled || rule.AbortIncompleteMultipartUpload == nil || rule.AbortIncompleteMultipartUpload.DaysAfterInitiation == nil || *rule.AbortIncompleteMultipartUpload.DaysAfterInitiation < 1 {
-			continue
-		}
-		if rule.Prefix != nil && rule.Filter == nil && strings.HasPrefix(prefix, *rule.Prefix) {
-			return nil
-		}
-		f := rule.Filter
-		if rule.Prefix == nil && f != nil && f.And == nil && f.Tag == nil && f.ObjectSizeGreaterThan == nil && f.ObjectSizeLessThan == nil && (f.Prefix == nil || strings.HasPrefix(prefix, *f.Prefix)) {
-			return nil
-		}
-	}
-	return errDeleteBlocked
-}
-
 func purgeDeleteArchive(ctx context.Context, c *k8s.Client, p Profile, inv *deleteInventory) error {
 	b := &inv.Binding
 	client, err := archiveDeleteClient(ctx, c, b)
@@ -154,7 +128,8 @@ func purgeDeleteArchive(ctx context.Context, c *k8s.Client, p Profile, inv *dele
 	}
 	checkProvider := func() error {
 		if p.ArchiveDeleteProvider == deleteR2Profile {
-			return checkR2Lifecycle(ctx, client, b.Bucket, b.Prefix)
+			// Incomplete multipart cleanup is an operator-managed R2 lifecycle assumption.
+			return nil
 		}
 		return checkDeleteBucket(ctx, client, b.Bucket)
 	}

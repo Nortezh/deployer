@@ -17,7 +17,7 @@ type archiveFixture struct {
 	objects                                map[string]string
 	deletes, lists                         int
 	versioning, denied, malformed, failure string
-	lifecycle                              string
+	lifecycleReads                         int
 	lock, replication                      bool
 	failBatch                              int
 	pageSize                               int
@@ -37,29 +37,8 @@ func newArchiveFixture(t *testing.T) (*archiveFixture, string) {
 		}
 		query := r.URL.Query()
 		if query.Has("lifecycle") {
-			if f.lifecycle == "missing" {
-				_, _ = fmt.Fprint(w, "<LifecycleConfiguration></LifecycleConfiguration>")
-				return
-			}
-			if f.lifecycle == "denied" {
-				errReply("AccessDenied", "unavailable")
-				return
-			}
-			if f.lifecycle == "tagged" {
-				_, _ = fmt.Fprint(w, "<LifecycleConfiguration><Rule><Filter><Tag><Key>type</Key><Value>private</Value></Tag></Filter><Status>Enabled</Status><AbortIncompleteMultipartUpload><DaysAfterInitiation>7</DaysAfterInitiation></AbortIncompleteMultipartUpload></Rule></LifecycleConfiguration>")
-				return
-			}
-			status, prefix, days := "Enabled", "", "7"
-			if f.lifecycle == "disabled" {
-				status = "Disabled"
-			}
-			if f.lifecycle == "foreign" {
-				prefix = "other/"
-			}
-			if f.lifecycle == "invalid" {
-				days = "0"
-			}
-			_, _ = fmt.Fprintf(w, "<LifecycleConfiguration><Rule><ID>incomplete-multipart</ID><Filter><Prefix>%s</Prefix></Filter><Status>%s</Status><AbortIncompleteMultipartUpload><DaysAfterInitiation>%s</DaysAfterInitiation></AbortIncompleteMultipartUpload></Rule></LifecycleConfiguration>", prefix, status, days)
+			f.lifecycleReads++
+			errReply("AccessDenied", "unavailable")
 			return
 		}
 		for _, feature := range []string{"versioning", "object-lock", "replication"} {
@@ -90,9 +69,6 @@ func newArchiveFixture(t *testing.T) (*archiveFixture, string) {
 		}
 		if query.Get("list-type") == "2" {
 			f.lists++
-			if f.lifecycle == "drift" {
-				f.lifecycle = "denied"
-			}
 			prefix, token := query.Get("prefix"), query.Get("continuation-token")
 			if prefix != "staging/cnpg-1-2/" {
 				t.Error("unbound prefix", prefix)
