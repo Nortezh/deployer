@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,10 +22,21 @@ import (
 )
 
 const deleteRustFSProfile = "rustfs-native-gc-v1"
+const deleteR2Profile = "cloudflare-r2-native-gc-v1"
+
+var r2Host = regexp.MustCompile(`^[a-f0-9]{32}(\.(eu|us|fedramp))?\.r2\.cloudflarestorage\.com$`)
+
+func supportedDeleteProvider(p Profile, endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	if p.ArchiveDeleteProvider == deleteRustFSProfile {
+		return err == nil && !r2Host.MatchString(strings.ToLower(u.Hostname()))
+	}
+	return p.ArchiveDeleteProvider == deleteR2Profile && err == nil && u.Scheme == "https" && u.User == nil && u.Port() == "" && (u.Path == "" || u.Path == "/") && u.RawQuery == "" && u.Fragment == "" && r2Host.MatchString(u.Host)
+}
 
 func validateDeleteArchive(ctx context.Context, c *k8s.Client, p Profile, inv *deleteInventory) error {
 	b := &inv.Binding
-	if p.ArchiveDeleteProvider != deleteRustFSProfile || b.Namespace != c.DBNamespace() || p.StorageClass != b.StorageClass || p.BackupObjectStore != b.ObjectStoreName || p.BackupProfileRevision != b.Archive.ProfileRevision {
+	if !supportedDeleteProvider(p, b.Archive.EndpointURL) || b.Namespace != c.DBNamespace() || p.StorageClass != b.StorageClass || p.BackupObjectStore != b.ObjectStoreName || p.BackupProfileRevision != b.Archive.ProfileRevision {
 		return errDeleteBlocked
 	}
 	store, err := c.Dynamic().Resource(objectStoreGVR).Namespace(c.DBNamespace()).Get(ctx, b.ObjectStoreName, metav1.GetOptions{})
@@ -64,6 +77,12 @@ func validateDeleteArchive(ctx context.Context, c *k8s.Client, p Profile, inv *d
 	app, err := c.Core().CoreV1().Secrets(c.DBNamespace()).Get(ctx, b.Server+"-app", metav1.GetOptions{})
 	if !apierrors.IsNotFound(err) && (err != nil || string(app.UID) != b.BootstrapUID) {
 		return errDeleteBlocked
+	}
+	if p.ArchiveDeleteProvider == deleteR2Profile {
+		client, err := archiveDeleteClient(ctx, c, b)
+		if err != nil || checkR2Lifecycle(ctx, client, b.Bucket, b.Prefix) != nil {
+			return errDeleteBlocked
+		}
 	}
 	return nil
 }
@@ -107,10 +126,39 @@ func checkDeleteBucket(ctx context.Context, client *s3.Client, bucket string) er
 	return nil
 }
 
+func checkR2Lifecycle(ctx context.Context, client *s3.Client, bucket, prefix string) error {
+	out, err := client.GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{Bucket: &bucket})
+	if err != nil || out == nil {
+		return errDeleteBlocked
+	}
+	for _, rule := range out.Rules {
+		if rule.Status != types.ExpirationStatusEnabled || rule.AbortIncompleteMultipartUpload == nil || rule.AbortIncompleteMultipartUpload.DaysAfterInitiation == nil || *rule.AbortIncompleteMultipartUpload.DaysAfterInitiation < 1 {
+			continue
+		}
+		if rule.Prefix != nil && rule.Filter == nil && strings.HasPrefix(prefix, *rule.Prefix) {
+			return nil
+		}
+		f := rule.Filter
+		if rule.Prefix == nil && f != nil && f.And == nil && f.Tag == nil && f.ObjectSizeGreaterThan == nil && f.ObjectSizeLessThan == nil && (f.Prefix == nil || strings.HasPrefix(prefix, *f.Prefix)) {
+			return nil
+		}
+	}
+	return errDeleteBlocked
+}
+
 func purgeDeleteArchive(ctx context.Context, c *k8s.Client, p Profile, inv *deleteInventory) error {
 	b := &inv.Binding
 	client, err := archiveDeleteClient(ctx, c, b)
-	if err != nil || checkDeleteBucket(ctx, client, b.Bucket) != nil {
+	if err != nil {
+		return errDeleteBlocked
+	}
+	checkProvider := func() error {
+		if p.ArchiveDeleteProvider == deleteR2Profile {
+			return checkR2Lifecycle(ctx, client, b.Bucket, b.Prefix)
+		}
+		return checkDeleteBucket(ctx, client, b.Bucket)
+	}
+	if checkProvider() != nil {
 		return errDeleteBlocked
 	}
 	// shortcut: at most 128 pages per pass, larger scopes resume on the same operation's next poll.
@@ -171,5 +219,5 @@ func purgeDeleteArchive(ctx context.Context, c *k8s.Client, p Profile, inv *dele
 			return errDeleteBlocked
 		}
 	}
-	return checkDeleteBucket(ctx, client, b.Bucket)
+	return checkProvider()
 }
