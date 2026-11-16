@@ -45,5 +45,5 @@ func ApplyRestore(ctx context.Context, c *k8s.Client, it *api.DeployerCommandCNP
 	return apply(ctx, c, &api.DeployerCommandDatabaseCreate{
 		ID: it.ID, ProjectID: it.ProjectID, Name: "cnpg-" + strconv.FormatInt(it.ID, 10), Type: api.DatabaseTypePostgres, Provider: api.DatabaseProviderCNPG,
 		StorageSize: it.StorageSize, Resources: it.Resources, PostgresConfig: &api.DatabaseConfigPostgres{User: it.Username, Password: string(password), Database: it.Database},
-	}, p, it)
+	}, p, it, &it.DeployerCommandCNPGCreate)
 }

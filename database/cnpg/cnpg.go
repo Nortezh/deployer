@@ -34,6 +34,7 @@ var routeGVR = schema.GroupVersionResource{Group: "traefik.io", Version: "v1alph
 type Profile struct {
 	HostSuffix, Port, EntryPoint, NodeName, StorageClass, Image string
 	AllocationNamespace, PortRange, PVCRetention                string
+	ArchiveDeleteProvider                                       string
 	BackupObjectStore                                           string
 	BackupProfileRevision                                       int64
 }
@@ -67,10 +68,10 @@ func effectiveConfig(cfg *api.DatabaseConfigPostgres) api.DatabaseConfigPostgres
 }
 
 func Apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCreate, p Profile) (string, int, bool, error) {
-	return apply(ctx, c, it, p, nil)
+	return apply(ctx, c, it, p, nil, nil)
 }
 
-func apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCreate, p Profile, recovery *api.DeployerCommandCNPGRestore) (string, int, bool, error) {
+func apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCreate, p Profile, recovery *api.DeployerCommandCNPGRestore, create *api.DeployerCommandCNPGCreate) (string, int, bool, error) {
 	if !p.Enabled() || it.PostgresConfig == nil || it.PostgresConfig.User == "" || it.PostgresConfig.Password == "" || it.StorageSize <= 0 {
 		return "", 0, false, errors.New("CNPG profile or database configuration missing")
 	}
@@ -125,19 +126,17 @@ func apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 		if recovery != nil {
 			spec["externalClusters"] = externalClusters
 		}
-		// A historical source may use a custom server name equal to this target.
-		// Never archive a restored target into its selected source's prefix.
-		if recovery == nil || recovery.Material.ServerName != name {
-			if plugins := createBackupPlugins(ctx, c, p, name); len(plugins) != 0 {
-				spec["plugins"] = plugins
-			}
+		// Persist the optional intent without an archiver; activation binds the returned UID.
+		annotations := map[string]any{}
+		if binding := newArchiveBinding(ctx, c, p, name, create, recovery); binding != nil {
+			annotations[archiveBindingAnnotation] = encodeBinding(binding)
 		}
 		if resources := database.ResourcesBlock(it.Resources); resources != nil {
 			spec["resources"] = resources
 		}
 		cluster, err = clusters.Create(ctx, &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster",
-			"metadata": map[string]any{"name": name, "namespace": c.DBNamespace(), "labels": map[string]any{"nortezh.io/database-id": labels["nortezh.io/database-id"]}},
+			"metadata": map[string]any{"name": name, "namespace": c.DBNamespace(), "labels": map[string]any{"nortezh.io/database-id": labels["nortezh.io/database-id"]}, "annotations": annotations},
 			"spec":     spec,
 		}}, metav1.CreateOptions{})
 	}
@@ -164,6 +163,11 @@ func apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 				return "", 0, false, errors.New("CNPG selected recovery configuration mismatch")
 			}
 		}
+	}
+
+	cluster, err = activateArchiveBinding(ctx, c, p, cluster, create)
+	if err != nil {
+		return "", 0, false, err
 	}
 
 	match := "HostSNI(`" + host + "`)"
