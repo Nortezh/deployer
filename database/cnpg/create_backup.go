@@ -19,6 +19,7 @@ import (
 )
 
 const archiveBindingAnnotation = "nortezh.io/archive-binding"
+const reconcileLoopAnnotation = "cnpg.io/reconciliationLoop"
 
 // Native metadata only: references and configuration, never credential values.
 type archiveBinding struct {
@@ -174,6 +175,9 @@ func exclusiveArchiveScope(ctx context.Context, c *k8s.Client, b *archiveBinding
 func activateArchiveBinding(ctx context.Context, c *k8s.Client, p Profile, cluster *unstructured.Unstructured, it *api.DeployerCommandCNPGCreate) (*unstructured.Unstructured, error) {
 	raw := cluster.GetAnnotations()[archiveBindingAnnotation]
 	if raw == "" {
+		if _, fenced := cluster.GetAnnotations()[reconcileLoopAnnotation]; fenced {
+			return nil, errBackupUnavailable
+		}
 		return cluster, nil
 	} // legacy/unbound roots are not enrolled by a retry.
 	var binding archiveBinding
@@ -194,18 +198,19 @@ func activateArchiveBinding(ctx context.Context, c *k8s.Client, p Profile, clust
 		return nil, errBackupUnavailable
 	}
 	if binding.ClusterUID != "" {
-		if !reflect.DeepEqual(plugins, archivePlugins(&binding)) {
+		if _, fenced := cluster.GetAnnotations()[reconcileLoopAnnotation]; fenced || !reflect.DeepEqual(plugins, archivePlugins(&binding)) {
 			return nil, errBackupUnavailable
 		}
 		return cluster, nil
 	}
-	if len(plugins) != 0 || cluster.GetGeneration() != 1 || binding.ClusterGeneration != 0 {
+	if len(plugins) != 0 || cluster.GetGeneration() != 1 || binding.ClusterGeneration != 0 || cluster.GetAnnotations()[reconcileLoopAnnotation] != "disabled" {
 		return nil, errBackupUnavailable
 	}
 	binding.ClusterUID = string(cluster.GetUID())
 	binding.ClusterGeneration = cluster.GetGeneration() + 1
 	annotations := cluster.GetAnnotations()
 	annotations[archiveBindingAnnotation] = encodeBinding(&binding)
+	delete(annotations, reconcileLoopAnnotation)
 	patch, _ := json.Marshal([]map[string]any{
 		{"op": "test", "path": "/metadata/uid", "value": string(cluster.GetUID())},
 		{"op": "test", "path": "/metadata/resourceVersion", "value": cluster.GetResourceVersion()},
@@ -216,7 +221,7 @@ func activateArchiveBinding(ctx context.Context, c *k8s.Client, p Profile, clust
 	if err != nil {
 		return nil, errBackupUnavailable
 	} // retry reads the same UID/binding after an ACK loss.
-	if updated.GetUID() != cluster.GetUID() || updated.GetGeneration() != binding.ClusterGeneration || updated.GetAnnotations()[archiveBindingAnnotation] != encodeBinding(&binding) {
+	if _, fenced := updated.GetAnnotations()[reconcileLoopAnnotation]; fenced || updated.GetUID() != cluster.GetUID() || updated.GetGeneration() != binding.ClusterGeneration || updated.GetAnnotations()[archiveBindingAnnotation] != encodeBinding(&binding) {
 		return nil, errBackupUnavailable
 	}
 	return updated, nil

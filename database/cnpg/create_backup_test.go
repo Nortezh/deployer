@@ -189,8 +189,8 @@ func TestCreateBarmanBindingAndLostResponseRetry(t *testing.T) {
 	if _, _, ready, err := ApplyCreate(context.Background(), c, it, p); err == nil || ready {
 		t.Fatal("lost response was treated as confirmed creation")
 	}
-	if plugins, _, _ := unstructured.NestedSlice(f.cluster().Object, "spec", "plugins"); len(plugins) != 0 {
-		t.Fatal("lost-create response enabled unbound archiving")
+	if plugins, _, _ := unstructured.NestedSlice(f.cluster().Object, "spec", "plugins"); len(plugins) != 0 || f.cluster().GetAnnotations()[reconcileLoopAnnotation] != "disabled" {
+		t.Fatal("lost-create response did not preserve a fenced, unbound root")
 	}
 	f.losePatchResponse = true
 	if _, _, ready, err := ApplyCreate(context.Background(), c, it, p); err == nil || ready {
@@ -198,8 +198,9 @@ func TestCreateBarmanBindingAndLostResponseRetry(t *testing.T) {
 	}
 	plugins, _, err := unstructured.NestedSlice(f.cluster().Object, "spec", "plugins")
 	var binding archiveBinding
-	if json.Unmarshal([]byte(f.cluster().GetAnnotations()[archiveBindingAnnotation]), &binding) != nil || binding.ClusterUID != string(f.cluster().GetUID()) || binding.CreateOperationID != it.OperationID || err != nil || !reflect.DeepEqual(plugins, archivePlugins(&binding)) {
-		t.Fatal("archiver and actual UID binding were not committed together")
+	_, fenced := f.cluster().GetAnnotations()[reconcileLoopAnnotation]
+	if json.Unmarshal([]byte(f.cluster().GetAnnotations()[archiveBindingAnnotation]), &binding) != nil || binding.ClusterUID != string(f.cluster().GetUID()) || binding.CreateOperationID != it.OperationID || err != nil || !reflect.DeepEqual(plugins, archivePlugins(&binding)) || fenced {
+		t.Fatal("archiver, actual UID binding and unfence were not committed together")
 	}
 	before, _ := json.Marshal(f.cluster().Object)
 	for range 2 {
@@ -253,6 +254,9 @@ func TestCreateWithoutBackupPrerequisitesAndNoSilentBackfill(t *testing.T) {
 			if _, exists, _ := unstructured.NestedSlice(f.cluster().Object, "spec", "plugins"); exists {
 				t.Fatal("unverified backup profile attached")
 			}
+			if _, fenced := f.cluster().GetAnnotations()[reconcileLoopAnnotation]; fenced {
+				t.Fatal("ordinary provisioning was fenced")
+			}
 			before, _ := json.Marshal(f.cluster().Object)
 			reads := f.storeReads
 			p.BackupProfileRevision = 1
@@ -303,8 +307,9 @@ func TestRestoreCreationSeparatesArchiveFromSelectedSource(t *testing.T) {
 				}
 			} else {
 				want := []any{map[string]any{"name": barmanPlugin, "enabled": true, "isWALArchiver": true, "parameters": map[string]any{"barmanObjectName": "backup-store", "serverName": "cnpg-3-2"}}}
-				if err != nil || !reflect.DeepEqual(plugins, want) {
-					t.Fatal("target did not receive its own archive")
+				_, fenced := f.cluster().GetAnnotations()[reconcileLoopAnnotation]
+				if err != nil || !reflect.DeepEqual(plugins, want) || fenced {
+					t.Fatal("target did not receive its own archive and unfence")
 				}
 			}
 			if f.clusterCreates != 1 || f.otherWrites != 0 {

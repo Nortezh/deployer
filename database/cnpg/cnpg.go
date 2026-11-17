@@ -130,6 +130,7 @@ func apply(ctx context.Context, c *k8s.Client, it *api.DeployerCommandDatabaseCr
 		annotations := map[string]any{}
 		if binding := newArchiveBinding(ctx, c, p, name, create, recovery); binding != nil {
 			annotations[archiveBindingAnnotation] = encodeBinding(binding)
+			annotations[reconcileLoopAnnotation] = "disabled" // No Pod before UID-bound plugin activation.
 		}
 		if resources := database.ResourcesBlock(it.Resources); resources != nil {
 			spec["resources"] = resources

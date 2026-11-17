@@ -10,7 +10,7 @@ import (
 )
 
 func TestProducerActivationRejectsDriftWithoutRebinding(t *testing.T) {
-	for _, mode := range []string{"patch-denied", "store-generation", "destination", "credential", "profile", "create-operation", "cluster-uid", "cluster-generation", "bootstrap-uid", "preexisting-archiver", "foreign-physical-prefix", "foreign-alias-store"} {
+	for _, mode := range []string{"patch-denied", "binding-removed", "fence-removed", "fence-changed", "store-generation", "destination", "credential", "profile", "create-operation", "cluster-uid", "cluster-generation", "bootstrap-uid", "preexisting-archiver", "foreign-physical-prefix", "foreign-alias-store"} {
 		t.Run(mode, func(t *testing.T) {
 			it := bootstrapCommand()
 			f, c, p := newBackupCreateFixture(t, it)
@@ -21,6 +21,12 @@ func TestProducerActivationRejectsDriftWithoutRebinding(t *testing.T) {
 			switch mode {
 			case "patch-denied":
 				f.denyPatch = true
+			case "binding-removed":
+				delete(f.objects["/apis/postgresql.cnpg.io/v1/namespaces/app-database/clusters/cnpg-1-2"]["metadata"].(map[string]any)["annotations"].(map[string]any), archiveBindingAnnotation)
+			case "fence-removed":
+				delete(f.objects["/apis/postgresql.cnpg.io/v1/namespaces/app-database/clusters/cnpg-1-2"]["metadata"].(map[string]any)["annotations"].(map[string]any), reconcileLoopAnnotation)
+			case "fence-changed":
+				f.objects["/apis/postgresql.cnpg.io/v1/namespaces/app-database/clusters/cnpg-1-2"]["metadata"].(map[string]any)["annotations"].(map[string]any)[reconcileLoopAnnotation] = "enabled"
 			case "store-generation":
 				f.profile.store.SetGeneration(2)
 			case "destination":
@@ -66,7 +72,28 @@ func TestProducerActivationRejectsDriftWithoutRebinding(t *testing.T) {
 			if mode != "patch-denied" && f.patches != 0 {
 				t.Fatal("patch attempted after drift")
 			}
+			if mode == "patch-denied" && f.cluster().GetAnnotations()[reconcileLoopAnnotation] != "disabled" {
+				t.Fatal("denied activation removed the pre-Pod fence")
+			}
 		})
+	}
+}
+
+func TestBoundProducerRejectsRefencing(t *testing.T) {
+	it := bootstrapCommand()
+	f, c, p := newBackupCreateFixture(t, it)
+	if _, _, _, err := ApplyCreate(context.Background(), c, it, p); err != nil {
+		t.Fatal(err)
+	}
+	root := f.objects["/apis/postgresql.cnpg.io/v1/namespaces/app-database/clusters/cnpg-1-2"]
+	root["metadata"].(map[string]any)["annotations"].(map[string]any)[reconcileLoopAnnotation] = "disabled"
+	before, _ := json.Marshal(f.cluster().Object)
+	if _, _, _, err := ApplyCreate(context.Background(), c, it, p); err == nil {
+		t.Fatal("bound root with a new fence was accepted")
+	}
+	after, _ := json.Marshal(f.cluster().Object)
+	if string(before) != string(after) || f.patches != 1 {
+		t.Fatal("refenced root was changed")
 	}
 }
 
