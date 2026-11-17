@@ -46,11 +46,15 @@ snapshot can still delay provisioning or disable backups. Existing TLS/query che
 remain authoritative for database Ready, and the separate verifier/Backend gates
 remain authoritative for backup availability.
 
-The binding is evaluated only when the Cluster GET returns NotFound. A retry after a
-lost create response preserves the existing manifest, even if backup configuration
-later changes. No existing Cluster is patched or has plugins removed. A Cluster first
-created without backup still needs explicit administrator backfill when prerequisites
-become available; a retry is not backfill.
+The binding intent is evaluated only when the Cluster GET returns NotFound. A new
+bound Cluster starts with `cnpg.io/reconciliationLoop=disabled`, so CNPG cannot create
+a Pod before the actual UID is known. After UID/profile/scope checks, one guarded
+patch commits the bound annotation and plugin while removing the fence. A lost
+response is reconciled against the same root; a denied/uncertain activation leaves
+it fenced, not silently available. A fenced root missing its binding intent fails
+closed rather than continuing as an ordinary root. Older unbound roots without this fence need
+explicit review rather than an unsafe retry activation. A Cluster first created
+without backup remains ordinary and is never silently backfilled.
 
 Restored targets keep their selected recovery source in `externalClusters` and receive
 a distinct target WAL archive binding under the same creation-only policy. A historical
